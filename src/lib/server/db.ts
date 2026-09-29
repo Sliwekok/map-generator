@@ -1,7 +1,7 @@
 import "server-only";
 import mongoose, { type ConnectOptions } from "mongoose";
 
-const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_URI = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017/map-generator";
 
 interface ParsedUri {
   hasCredentials: boolean;
@@ -12,7 +12,7 @@ interface ParsedUri {
 function parseUri(uri: string): ParsedUri {
   const m = uri.match(/^mongodb(?:\+srv)?:\/\/([^/?#]*)(\/[^?#]*)?(\?[^#]*)?/i);
   if (!m) return { hasCredentials: false, pathDb: "", hasAuthSource: false };
-  const [, authority, path, query] = m;``
+  const [, authority, path, query] = m;
   return {
     hasCredentials: authority.includes("@"),
     pathDb: decodeURIComponent((path ?? "").replace(/^\//, "")),

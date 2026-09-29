@@ -28,7 +28,8 @@ import { useUploads } from "@/lib/client/uploads";
 import { useSession } from "@/lib/client/session";
 import { useI18n } from "@/lib/i18n";
 import { FEET_PER_CELL } from "@/lib/limits";
-import type { MapElement, TextElement } from "@/lib/types";
+import { LAYER_ORDER, type MapContent, type MapElement, type TextElement } from "@/lib/types";
+import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 
 export const ASSET_MIME = "application/x-mapforge-asset";
 
@@ -71,6 +72,8 @@ export default function EditorCanvas() {
   const [penPts, setPenPts] = useState<[number, number][] | null>(null);
   const [measure, setMeasure] = useState<{ a: Pt; b: Pt } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const didFit = useRef<string | null>(null);
 
@@ -218,6 +221,9 @@ export default function EditorCanvas() {
     const target = e.target as Element;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const world = toWorld(e.clientX, e.clientY);
+
+    // Right button is handled by onContextMenu.
+    if (e.button === 2) return;
 
     // Pan: middle button, space held, or pan tool
     if (e.button === 1 || spaceDown || s.tool === "pan") {
@@ -473,6 +479,25 @@ export default function EditorCanvas() {
     }
   };
 
+  // ---- right-click menu
+  const onContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const s = useEditor.getState();
+    if (!s.doc || s.editingTextId || gesture.current) return;
+    const world = toWorld(e.clientX, e.clientY);
+    // Locked items (and items when a drawing tool is active) don't receive pointer events,
+    // so fall back to a geometric hit test to still offer e.g. "Unlock".
+    const node = (e.target as Element).closest("[data-el]");
+    const id = node?.getAttribute("data-el") ?? hitTest(s.doc, world);
+    if (id) {
+      if (!s.selection.includes(id)) s.select([id]);
+    } else {
+      s.select([]);
+    }
+    if (s.tool !== "select") s.setTool("select");
+    setCtxMenu({ x: e.clientX, y: e.clientY, world });
+  };
+
   // ---- drag & drop from library / OS
   const onDragOver = (e: React.DragEvent) => {
     if (e.dataTransfer.types.includes(ASSET_MIME) || e.dataTransfer.types.includes("Files")) {
@@ -524,7 +549,7 @@ export default function EditorCanvas() {
       onDragOver={onDragOver}
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={onContextMenu}
       data-testid="editor-canvas"
     >
       <svg width="100%" height="100%" className="absolute inset-0 block">
@@ -644,6 +669,8 @@ export default function EditorCanvas() {
 
       {editing && <TextEditorOverlay el={editing} view={view} />}
 
+      {ctxMenu && <ContextMenu menu={ctxMenu} onClose={closeCtxMenu} />}
+
       {dragOver && (
         <div className="pointer-events-none absolute inset-3 flex items-center justify-center rounded-xl border-2 border-dashed border-amber-400 bg-amber-400/10 text-lg font-semibold text-amber-200">
           {t("editor.dropHere")}
@@ -651,6 +678,22 @@ export default function EditorCanvas() {
       )}
     </div>
   );
+}
+
+/** Top-most element (on a visible layer) whose rotated box contains the point. */
+function hitTest(doc: MapContent, p: Pt): string | null {
+  for (const layerId of [...LAYER_ORDER].reverse()) {
+    const ls = doc.layers.find((l) => l.id === layerId);
+    if (ls && !ls.visible) continue;
+    for (let i = doc.elements.length - 1; i >= 0; i--) {
+      const el = doc.elements[i];
+      if (el.layer !== layerId) continue;
+      const c = center(el);
+      const local = el.rotation ? rotatePt(p, c, -el.rotation) : p;
+      if (local.x >= el.x && local.x <= el.x + el.width && local.y >= el.y && local.y <= el.y + el.height) return el.id;
+    }
+  }
+  return null;
 }
 
 function cellCenter(p: Pt, g: number): Pt {

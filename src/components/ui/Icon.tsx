@@ -57,6 +57,10 @@ const P: Record<string, string> = {
   scaleDown: "M10 4v6H4M14 20v-6h6M10 10L3 3M14 14l7 7",
   file: "M6 3h8l4 4v14H6zM14 3v4h4",
   chevronDown: "M6 9l6 6 6-6",
+  chevronRight: "M9 6l6 6-6 6",
+  cut: "M6 4a3 3 0 110 6 3 3 0 010-6zM6 14a3 3 0 110 6 3 3 0 010-6zM8.6 8.5L20 18M8.6 15.5L20 6",
+  paste: "M9 4h6v3H9zM9 5H6v15h12V5h-3",
+  duplicate: "M8 8h12v12H8zM4 16V4h12M14 11v6M11 14h6",
   list: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
   sliders: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4",
 };
