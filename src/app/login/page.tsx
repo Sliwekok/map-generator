@@ -1,12 +1,12 @@
 import Navbar, { Footer } from "@/components/Navbar";
-import HomePage from "@/components/home/HomePage";
+import AuthForm from "@/components/AuthForm";
 
-export default function Home() {
+export default function LoginPage() {
   return (
     <>
       <Navbar />
       <main>
-        <HomePage />
+        <AuthForm mode="login" />
       </main>
       <Footer />
     </>

@@ -1,0 +1,168 @@
+// Shared types used by both the client (editor) and the server (API / DB).
+
+export type LayerId = "background" | "terrain" | "objects" | "tokens" | "labels";
+
+export const LAYER_ORDER: LayerId[] = ["background", "terrain", "objects", "tokens", "labels"];
+
+export interface LayerState {
+  id: LayerId;
+  visible: boolean;
+  locked: boolean;
+}
+
+export type GridStyle = "lines" | "dots";
+
+export interface GridSettings {
+  enabled: boolean;
+  size: number; // cell size in px
+  color: string;
+  opacity: number; // 0..1
+  lineWidth: number; // px (in map space)
+  style: GridStyle;
+}
+
+export interface BackgroundSettings {
+  color: string;
+  pattern: string | null; // pattern id from the asset library, tiled at grid size
+  patternScale: number; // multiplier of grid size for one pattern tile
+}
+
+interface ElementBase {
+  id: string;
+  x: number; // top-left of the un-rotated box, map px
+  y: number;
+  width: number;
+  height: number;
+  rotation: number; // degrees, around box center
+  opacity: number; // 0..1
+  layer: LayerId;
+  locked?: boolean;
+  flipX?: boolean;
+  flipY?: boolean;
+}
+
+export interface AssetElement extends ElementBase {
+  type: "asset";
+  assetId: string; // built-in id, or "u:<uploadId>" for user uploads
+  tint?: string; // replaces currentColor in tintable assets
+}
+
+export interface ShapeElement extends ElementBase {
+  type: "rect" | "ellipse";
+  fill: string;
+  fillOpacity: number;
+  stroke: string;
+  strokeWidth: number;
+  radius?: number; // rect corner radius
+}
+
+export interface TextElement extends ElementBase {
+  type: "text";
+  text: string;
+  fontSize: number;
+  color: string;
+  fontFamily: "serif" | "sans" | "mono" | "fantasy";
+  bold?: boolean;
+  italic?: boolean;
+  outline?: string | null; // halo/outline color for readability on busy maps
+}
+
+export interface PathElement extends ElementBase {
+  type: "path";
+  // points in element-local px (0..width, 0..height)
+  points: [number, number][];
+  stroke: string;
+  strokeWidth: number;
+  closed?: boolean;
+  fill?: string | null;
+}
+
+export type MapElement = AssetElement | ShapeElement | TextElement | PathElement;
+export type ElementType = MapElement["type"];
+
+/** The editable content of a map (what autosave persists). */
+export interface MapContent {
+  name: string;
+  width: number;
+  height: number;
+  background: BackgroundSettings;
+  grid: GridSettings;
+  layers: LayerState[];
+  elements: MapElement[];
+}
+
+export type MapSource = "local" | "cloud";
+
+export interface MapDoc extends MapContent {
+  id: string;
+  source: MapSource;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MapSummary {
+  id: string;
+  source: MapSource;
+  name: string;
+  width: number;
+  height: number;
+  updatedAt: string;
+}
+
+export interface UploadInfo {
+  id: string; // "u:<id>" form is used in elements; this is the raw id
+  name: string;
+  contentType: string;
+  width: number;
+  height: number;
+  size: number;
+  source: MapSource;
+  url: string; // usable in <image href>
+}
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface AssetDef {
+  id: string;
+  name: { en: string; pl: string };
+  category: AssetCategory;
+  viewBox: string; // e.g. "0 0 100 100"
+  body: string; // inner SVG markup (trusted, built-in only)
+  cells: [number, number]; // default size in grid cells
+  layer: LayerId;
+  tintable?: boolean; // uses currentColor
+  defaultTint?: string;
+  premium?: boolean;
+}
+
+export type AssetCategory =
+  | "terrain"
+  | "nature"
+  | "structures"
+  | "furniture"
+  | "dungeon"
+  | "tokens"
+  | "markers";
+
+export const ASSET_CATEGORIES: AssetCategory[] = [
+  "terrain",
+  "nature",
+  "structures",
+  "dungeon",
+  "furniture",
+  "tokens",
+  "markers",
+];
+
+export interface PatternDef {
+  id: string;
+  name: { en: string; pl: string };
+  size: number; // tile size in its own units (viewBox is 0 0 size size)
+  body: string;
+  premium?: boolean;
+}
