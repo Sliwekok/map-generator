@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MapRenderer } from "@/components/map/MapRenderer";
+import { ElementPreview, MapRenderer } from "@/components/map/MapRenderer";
 import { useEditor, makeText, type View } from "@/lib/editor/store";
 import {
   aabb,
@@ -23,12 +23,15 @@ import {
 import { assetElement, pathElement, shapeElement, snapBox, uploadElement } from "@/lib/editor/factory";
 import { relayoutText, FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { uploadFiles } from "@/lib/editor/actions";
+import { addPass, brushElement, brushPx, erasePass, fullyErased, mergeTarget, smoothStroke, styleFrom, type BrushStyle } from "@/lib/editor/brush";
+import { useBrush } from "@/lib/editor/brushStore";
+import { toast } from "@/lib/client/toasts";
 import { useAssets } from "@/lib/client/assets";
 import { useUploadMap, useUploads } from "@/lib/client/uploads";
 import { useSession } from "@/lib/client/session";
 import { useI18n } from "@/lib/i18n";
 import { FEET_PER_CELL } from "@/lib/limits";
-import { LAYER_ORDER, type MapContent, type MapElement, type TextElement } from "@/lib/types";
+import { LAYER_ORDER, type BrushElement, type MapContent, type MapElement, type TextElement } from "@/lib/types";
 import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 
 export const ASSET_MIME = "application/x-mapforge-asset";
@@ -58,7 +61,23 @@ type Gesture =
   | { kind: "rotate"; pivot: Pt; startAngle: number; base: MapElement[]; single: boolean }
   | { kind: "create"; shape: "rect" | "ellipse"; start: Pt }
   | { kind: "pen"; points: [number, number][] }
+  | {
+      kind: "brush";
+      raw: [number, number][];
+      anchor: Pt; // start of a straight (Shift) line
+      straight: boolean;
+      id: string; // element being painted (new, or the one this stroke continues)
+      base: BrushElement | null; // continued element as it was before this stroke
+      size: number;
+      style: BrushStyle;
+      smoothing: number;
+      frame: number; // pending requestAnimationFrame (0 = none)
+    }
+  | { kind: "erase"; raw: [number, number][]; size: number; base: Map<string, BrushElement>; frame: number }
   | { kind: "measure"; start: Pt };
+
+/** Last point of the previous brush stroke - Shift+click draws a straight line from it. */
+let lastBrushEnd: Pt | null = null;
 
 export default function EditorCanvas() {
   const { t } = useI18n();
@@ -73,6 +92,11 @@ export default function EditorCanvas() {
   const [measure, setMeasure] = useState<{ a: Pt; b: Pt } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const ringRef = useRef<SVGCircleElement>(null);
+  // The stroke being painted is drawn on its own layer on top of the map (and committed on
+  // release), so the browser doesn't have to repaint the whole map on every pointer move.
+  const [brushPreview, setBrushPreview] = useState<BrushElement | null>(null);
+  const lastPointer = useRef<Pt | null>(null);
   const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const didFit = useRef<string | null>(null);
@@ -131,6 +155,20 @@ export default function EditorCanvas() {
     window.addEventListener("mapforge:focus", onFocus);
     return () => window.removeEventListener("mapforge:focus", onFocus);
   }, []);
+
+  // Brush size changed ([ / ] or the panel): resize the outline under the pointer right away.
+  useEffect(
+    () =>
+      useBrush.subscribe(() => {
+        const ring = ringRef.current;
+        const p = lastPointer.current;
+        if (!ring || !p) return;
+        const s = useEditor.getState();
+        const b = useBrush.getState().settings;
+        ring.setAttribute("r", String(brushPx(s.tool === "eraser" ? b.eraserSize : b.size, s.doc?.grid.size || 70) / 2));
+      }),
+    [],
+  );
 
   // Space = temporary pan
   useEffect(() => {
@@ -245,6 +283,44 @@ export default function EditorCanvas() {
       setPenPts([[world.x, world.y]]);
       return;
     }
+    if (s.tool === "brush") {
+      const b = useBrush.getState().settings;
+      const grid = s.doc.grid.size || 70;
+      const layer = s.doc.layers.find((l) => l.id === b.layer);
+      if (layer?.locked || layer?.visible === false) {
+        toast(t(layer.locked ? "editor.brush.layerLocked" : "editor.brush.layerHidden"), "error");
+        return;
+      }
+      const style = styleFrom(b, grid);
+      const size = brushPx(b.size, grid);
+      const straight = e.shiftKey && lastBrushEnd;
+      const start = straight ? lastBrushEnd! : e.shiftKey ? snapPt(world, e.altKey) : world;
+      const raw: [number, number][] = straight ? [[start.x, start.y], [world.x, world.y]] : [[world.x, world.y]];
+      const target = b.merge ? mergeTarget(s.doc, start, style) : null;
+      const first = target ? addPass(target, raw, size) : brushElement(raw, size, style);
+      gesture.current = {
+        kind: "brush",
+        raw,
+        anchor: start,
+        straight: !!straight,
+        id: first.id,
+        base: target,
+        size,
+        style,
+        smoothing: b.smoothing,
+        frame: 0,
+      };
+      setBrushPreview(first);
+      return;
+    }
+    if (s.tool === "eraser") {
+      const size = brushPx(useBrush.getState().settings.eraserSize, s.doc.grid.size || 70);
+      s.beginGesture();
+      const g: Gesture = { kind: "erase", raw: [[world.x, world.y]], size, base: new Map(), frame: 0 };
+      gesture.current = g;
+      eraseStep(g, s.view.zoom);
+      return;
+    }
     if (s.tool === "measure") {
       const p = s.snap && !e.altKey ? cellCenter(world, s.doc.grid.size) : world;
       gesture.current = { kind: "measure", start: p };
@@ -324,6 +400,8 @@ export default function EditorCanvas() {
     const s = useEditor.getState();
     const world = toWorld(e.clientX, e.clientY);
     window.dispatchEvent(new CustomEvent("mapforge:cursor", { detail: world }));
+    lastPointer.current = world;
+    moveRing(world);
     if (!g || !s.doc) return;
     const doc = s.doc;
 
@@ -423,12 +501,94 @@ export default function EditorCanvas() {
         setPenPts([...g.points]);
         break;
       }
+      case "brush": {
+        g.straight = e.shiftKey;
+        if (e.shiftKey) {
+          const p = s.snap && !e.altKey ? snapPt(world, false) : world;
+          g.raw = [[g.anchor.x, g.anchor.y], [p.x, p.y]];
+        } else {
+          const last = g.raw[g.raw.length - 1];
+          if (Math.hypot(world.x - last[0], world.y - last[1]) * s.view.zoom < 1.5) return;
+          g.raw.push([world.x, world.y]);
+        }
+        // Pointer events can outpace frames: redraw at most once per frame.
+        if (!g.frame) {
+          g.frame = requestAnimationFrame(() => {
+            g.frame = 0;
+            setBrushPreview(paintStep(g, useEditor.getState().view.zoom));
+          });
+        }
+        break;
+      }
+      case "erase": {
+        const last = g.raw[g.raw.length - 1];
+        if (Math.hypot(world.x - last[0], world.y - last[1]) * s.view.zoom < 1.5) return;
+        g.raw.push([world.x, world.y]);
+        if (!g.frame) {
+          g.frame = requestAnimationFrame(() => {
+            g.frame = 0;
+            eraseStep(g, useEditor.getState().view.zoom);
+          });
+        }
+        break;
+      }
       case "measure": {
         const p = s.snap && !e.altKey ? cellCenter(world, doc.grid.size) : world;
         setMeasure({ a: g.start, b: p });
         break;
       }
     }
+  };
+
+  /** The element as it looks with the current stroke (smoothed) applied. */
+  const paintStep = (g: Extract<Gesture, { kind: "brush" }>, zoom: number): BrushElement => {
+    const pts = g.straight ? g.raw : smoothStroke(g.raw, g.size, g.smoothing, zoom);
+    if (g.base) return addPass(g.base, pts, g.size);
+    return { ...brushElement(pts, g.size, g.style), id: g.id };
+  };
+
+  /** Applies the eraser stroke to every editable painted element it has touched so far. */
+  const eraseStep = (g: Extract<Gesture, { kind: "erase" }>, zoom: number) => {
+    const s = useEditor.getState();
+    const doc = s.doc;
+    if (!doc) return;
+    const r = g.size / 2;
+    const recent = g.raw.slice(-2);
+    const open = new Set(doc.layers.filter((l) => l.visible && !l.locked).map((l) => l.id));
+    for (const el of doc.elements) {
+      if (el.type !== "brush" || g.base.has(el.id) || el.locked || !open.has(el.layer)) continue;
+      const b = aabb(el);
+      if (recent.some(([x, y]) => x >= b.x - r && x <= b.x + b.width + r && y >= b.y - r && y <= b.y + b.height + r)) g.base.set(el.id, el);
+    }
+    if (!g.base.size) return;
+    // Only strokes under the latest movement change; the others keep what they already got.
+    const [ax, ay] = recent[0];
+    const [bx, by] = recent[recent.length - 1];
+    const seg = { x: Math.min(ax, bx) - r, y: Math.min(ay, by) - r, width: Math.abs(bx - ax) + 2 * r, height: Math.abs(by - ay) + 2 * r };
+    const ids = [...g.base.keys()].filter((id) => {
+      const el = doc.elements.find((x) => x.id === id);
+      return !!el && intersects(aabb(el), seg);
+    });
+    if (!ids.length) return;
+    const pts = smoothStroke(g.raw, g.size, 0.2, zoom);
+    s.updateElements(ids, (el) => (el.type === "brush" ? erasePass(g.base.get(el.id)!, pts, g.size) : el), { history: false });
+  };
+
+  /** Brush / eraser outline following the pointer (updated directly - no re-render per move). */
+  const moveRing = (world: Pt | null) => {
+    const ring = ringRef.current;
+    if (!ring) return;
+    const s = useEditor.getState();
+    if (!world || (s.tool !== "brush" && s.tool !== "eraser") || !s.doc) {
+      ring.setAttribute("visibility", "hidden");
+      return;
+    }
+    const b = useBrush.getState().settings;
+    const px = brushPx(s.tool === "eraser" ? b.eraserSize : b.size, s.doc.grid.size || 70);
+    ring.setAttribute("cx", String(world.x));
+    ring.setAttribute("cy", String(world.y));
+    ring.setAttribute("r", String(px / 2));
+    ring.setAttribute("visibility", "visible");
   };
 
   const onPointerUp = () => {
@@ -462,6 +622,31 @@ export default function EditorCanvas() {
         const el = pathElement(pts, s.doc);
         if (el) s.addElements([el], false);
         setPenPts(null);
+        break;
+      }
+      case "brush": {
+        if (g.frame) cancelAnimationFrame(g.frame);
+        const el = paintStep(g, s.view.zoom);
+        if (g.base) s.updateElements([g.base.id], () => el);
+        else s.addElements([el], false);
+        setBrushPreview(null);
+        const last = g.raw[g.raw.length - 1];
+        lastBrushEnd = { x: last[0], y: last[1] };
+        break;
+      }
+      case "erase": {
+        if (g.frame) cancelAnimationFrame(g.frame);
+        eraseStep(g, s.view.zoom);
+        const gone = [...g.base.keys()].filter((id) => {
+          const el = useEditor.getState().doc?.elements.find((x) => x.id === id);
+          return el?.type === "brush" && fullyErased(el);
+        });
+        if (gone.length) {
+          const del = new Set(gone);
+          s.setDoc((d) => ({ ...d, elements: d.elements.filter((x) => !del.has(x.id)) }), { history: false });
+          s.select(s.selection.filter((id) => !del.has(id)));
+        }
+        s.endGesture();
         break;
       }
     }
@@ -538,10 +723,13 @@ export default function EditorCanvas() {
   const z = view.zoom;
   const hs = 9 / z; // handle size in map units
   const editing = editingTextId ? (doc.elements.find((x) => x.id === editingTextId) as TextElement | undefined) : undefined;
-  const hidden = editing ? new Set([editing.id]) : undefined;
+  // While a stroke continues an existing element, the overlay shows that element - hide the original.
+  const hiddenId = editing?.id ?? (brushPreview && doc.elements.some((x) => x.id === brushPreview.id) ? brushPreview.id : null);
+  const hidden = hiddenId ? new Set([hiddenId]) : undefined;
 
   const cursor =
     panning ? "grabbing" : spaceDown || tool === "pan" ? "grab" : tool === "text" ? "text" : tool === "select" ? "default" : "crosshair";
+  const painting = (tool === "brush" || tool === "eraser") && !spaceDown;
 
   return (
     <div
@@ -552,6 +740,10 @@ export default function EditorCanvas() {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onPointerLeave={() => {
+        lastPointer.current = null;
+        moveRing(null);
+      }}
       onDoubleClick={onDoubleClick}
       onDragOver={onDragOver}
       onDragLeave={() => setDragOver(false)}
@@ -673,6 +865,36 @@ export default function EditorCanvas() {
           {measure && tool === "measure" && <MeasureOverlay a={measure.a} b={measure.b} z={z} grid={doc.grid.size} t={t} />}
         </g>
       </svg>
+
+      {painting && (
+        // Separate layer (own compositing surface): the live stroke and the brush outline
+        // repaint without touching the map below.
+        <svg width="100%" height="100%" className="pointer-events-none absolute inset-0 block" style={{ willChange: "transform" }}>
+          <g transform={`translate(${view.x} ${view.y}) scale(${z})`}>
+            {brushPreview && (
+              <>
+                <defs>
+                  <clipPath id="pv-clip">
+                    <rect x={0} y={0} width={doc.width} height={doc.height} />
+                  </clipPath>
+                </defs>
+                <g clipPath="url(#pv-clip)" data-testid="brush-preview">
+                  <ElementPreview el={brushPreview} idPrefix="pv" patterns={patterns} uploads={uploads} />
+                </g>
+              </>
+            )}
+            <circle
+              ref={ringRef}
+              visibility="hidden"
+              fill={tool === "eraser" ? "rgba(255,255,255,0.12)" : "none"}
+              stroke={tool === "eraser" ? "#f87171" : "#fbbf24"}
+              strokeWidth={1.5 / z}
+              strokeDasharray={tool === "eraser" ? `${4 / z} ${3 / z}` : undefined}
+              data-testid="brush-ring"
+            />
+          </g>
+        </svg>
+      )}
 
       {editing && <TextEditorOverlay el={editing} view={view} />}
 

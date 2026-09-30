@@ -5,20 +5,28 @@ import { useI18n, type TKey } from "@/lib/i18n";
 import { useEditor } from "@/lib/editor/store";
 import { useAssets } from "@/lib/client/assets";
 import { useUploads } from "@/lib/client/uploads";
-import { aabb, unionBox } from "@/lib/editor/geometry";
+import { aabb, scaleBrushContent, unionBox } from "@/lib/editor/geometry";
 import { snapBox } from "@/lib/editor/factory";
 import { relayoutText } from "@/lib/editor/text";
 import { LAYER_ORDER, type LayerId, type MapElement, type TextElement } from "@/lib/types";
 import { Icon } from "@/components/ui/Icon";
 import { Button, ColorField, cx, IconButton, Label, NumberField, Segmented, Slider } from "@/components/ui/controls";
+import { BrushProps, BrushToolPanel } from "./BrushPanel";
 
 export default function RightPanel() {
   const { t } = useI18n();
+  const painting = useEditor((s) => s.tool === "brush" || s.tool === "eraser");
   return (
     <aside className="flex w-72 shrink-0 flex-col border-l border-slate-700 bg-slate-900">
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <h3 className="mb-3 text-sm font-semibold text-slate-200">{t("editor.panels.properties")}</h3>
-        <Properties />
+        {painting ? (
+          <BrushToolPanel />
+        ) : (
+          <>
+            <h3 className="mb-3 text-sm font-semibold text-slate-200">{t("editor.panels.properties")}</h3>
+            <Properties />
+          </>
+        )}
       </div>
       <div className="border-t border-slate-700 p-3">
         <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-200">
@@ -198,6 +206,7 @@ function resizeTo(e: MapElement, w: number | null, h: number | null): MapElement
     const k = w !== null ? width / e.width : height / e.height;
     return relayoutText({ ...e, fontSize: Math.max(4, e.fontSize * k) });
   }
+  if (e.type === "brush") return scaleBrushContent(e, width / e.width, height / e.height);
   const next = { ...e, width, height } as MapElement;
   if (next.type === "path" && e.type === "path") {
     next.points = e.points.map(([x, y]) => [(x * width) / e.width, (y * height) / e.height]);
@@ -276,6 +285,7 @@ function TypeProps({ el }: { el: MapElement }) {
       </>
     );
   }
+  if (el.type === "brush") return <BrushProps el={el} />;
   if (el.type === "path") {
     return (
       <Section title={t("editor.props.stroke")}>
@@ -457,7 +467,7 @@ function Layers() {
   );
 }
 
-const TYPE_ICON: Record<string, string> = { asset: "image", image: "image", rect: "rect", ellipse: "ellipse", path: "pen", text: "text" };
+const TYPE_ICON: Record<string, string> = { asset: "image", image: "image", rect: "rect", ellipse: "ellipse", path: "pen", brush: "brush", text: "text" };
 
 /** Collapsible list of every element on the map: click selects (and centers), trash deletes. */
 function ItemList() {

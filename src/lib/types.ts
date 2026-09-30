@@ -77,7 +77,33 @@ export interface PathElement extends ElementBase {
   fill?: string | null;
 }
 
-export type MapElement = AssetElement | ShapeElement | TextElement | PathElement;
+/**
+ * One brush or eraser pass inside a painted element. Points are the centre line in
+ * element-local px; `size` is the full width of the pass. Ops are drawn in order, so an
+ * eraser pass only removes paint laid down before it.
+ */
+export interface BrushOp {
+  erase?: true;
+  size: number;
+  points: [number, number][];
+}
+
+/**
+ * Hand-painted stroke(s): rivers, roads, paths, lava… One element can hold several
+ * passes of the same brush (they merge seamlessly, e.g. river forks).
+ */
+export interface BrushElement extends ElementBase {
+  type: "brush";
+  ops: BrushOp[];
+  color: string; // paint colour; also the fallback when the texture can't be shown
+  texture?: string | null; // pattern id from the asset library, or "u:<uploadId>"
+  textureSize?: number; // px of one texture tile
+  softness?: number; // 0..1 feathered edge (fraction of the brush size)
+  edge?: string | null; // colour of the outline along the stroke (river banks, road kerbs)
+  edgeWidth?: number; // px on each side of the stroke
+}
+
+export type MapElement = AssetElement | ShapeElement | TextElement | PathElement | BrushElement;
 export type ElementType = MapElement["type"];
 
 /** The editable content of a map (what autosave persists). */

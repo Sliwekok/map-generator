@@ -7,8 +7,10 @@ import { useSession } from "@/lib/client/session";
 import { useAssets, useAssetsPending } from "@/lib/client/assets";
 import { useUploads } from "@/lib/client/uploads";
 import { loadMap } from "@/lib/client/repo";
+import { uploadIdsOf } from "@/lib/uploadRefs";
 import { useEditor } from "@/lib/editor/store";
 import { flushSave, useAutosave, useShortcuts } from "@/lib/editor/hooks";
+import { hydrateBrush } from "@/lib/editor/brushStore";
 import { Button } from "@/components/ui/controls";
 import EditorCanvas from "./EditorCanvas";
 import Toolbar from "./Toolbar";
@@ -32,6 +34,7 @@ export default function EditorShell({ id }: { id: string }) {
 
   useAutosave();
   useShortcuts();
+  useEffect(hydrateBrush, []);
 
   useEffect(() => {
     void useAssets.getState().load(user);
@@ -49,9 +52,7 @@ export default function EditorShell({ id }: { id: string }) {
         useEditor.getState().load(doc);
         setResult({ id, status: "ready" });
         // Names / sizes of the images this map uses (layers list, export) - not the whole library.
-        void useUploads.getState().ensureInfos(
-          doc.elements.flatMap((e) => (e.type === "asset" && e.assetId.startsWith("u:") ? [e.assetId.slice(2)] : [])),
-        );
+        void useUploads.getState().ensureInfos(uploadIdsOf(doc.elements));
       })
       .catch(() => !cancelled && setResult({ id, status: "error" }));
     return () => {

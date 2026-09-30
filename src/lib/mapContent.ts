@@ -1,6 +1,7 @@
 import {
   LAYER_ORDER,
   type BackgroundSettings,
+  type BrushOp,
   type GridSettings,
   type LayerId,
   type LayerState,
@@ -139,6 +140,38 @@ function sanitizeElement(raw: unknown): MapElement | null {
         strokeWidth: num(r.strokeWidth, 0.5, 500, 6),
         closed: r.closed === true || undefined,
         fill: r.fill ? color(r.fill, "none") : null,
+      };
+    }
+    case "brush": {
+      if (!Array.isArray(r.ops)) return null;
+      const B = LIMITS.brush;
+      const ops: BrushOp[] = [];
+      let total = 0;
+      for (const o of r.ops.slice(0, B.maxOps)) {
+        if (!o || typeof o !== "object" || !Array.isArray((o as BrushOp).points)) continue;
+        const op = o as Record<string, unknown>;
+        const points: [number, number][] = [];
+        for (const p of (op.points as unknown[]).slice(0, Math.min(B.maxOpPoints, B.maxPoints - total))) {
+          if (Array.isArray(p) && p.length === 2) points.push([num(p[0], -BIG, BIG, 0), num(p[1], -BIG, BIG, 0)]);
+        }
+        if (!points.length) continue;
+        total += points.length;
+        ops.push({ ...(op.erase === true ? { erase: true as const } : {}), size: num(op.size, 0.5, B.maxSize, 20), points });
+        if (total >= B.maxPoints) break;
+      }
+      if (!ops.some((o) => !o.erase)) return null;
+      const texture = typeof r.texture === "string" && ID_RE.test(r.texture) ? r.texture : null;
+      const edge = r.edge ? color(r.edge, "#3b2f23") : null;
+      return {
+        ...base,
+        type: "brush",
+        ops,
+        color: color(r.color, "#3f7fb5"),
+        texture,
+        textureSize: texture ? num(r.textureSize, 2, 5000, 70) : undefined,
+        softness: num(r.softness, 0, 1, 0) || undefined,
+        edge,
+        edgeWidth: edge ? num(r.edgeWidth, 0.5, 500, 4) : undefined,
       };
     }
     default:

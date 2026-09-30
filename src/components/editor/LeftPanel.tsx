@@ -7,11 +7,12 @@ import { useAssets } from "@/lib/client/assets";
 import { useSession } from "@/lib/client/session";
 import { useEditor } from "@/lib/editor/store";
 import { assetElement, uploadElement } from "@/lib/editor/factory";
-import type { AssetDef, AssetGroupInfo, CatalogItem, I18nText, PatternDef, UploadInfo } from "@/lib/types";
+import type { AssetDef, CatalogItem, I18nText, UploadInfo } from "@/lib/types";
 import { Icon } from "@/components/ui/Icon";
 import { ColorField, cx, Label, Slider } from "@/components/ui/controls";
 import FileBrowser from "@/components/files/FileBrowser";
 import { ASSET_MIME } from "./EditorCanvas";
+import { GroupHeader, LibraryStatus, TextureGrid, useCollapsed } from "./libraryParts";
 
 type Tab = "library" | "uploads" | "background";
 
@@ -79,54 +80,12 @@ function AssetThumb({ asset }: { asset: AssetDef }) {
 
 /** Items rendered per group before "Show all" - keeps big libraries fast. */
 const GROUP_PAGE = 60;
-const COLLAPSED_KEY = "mf_lib_collapsed";
-
-function readCollapsed(): Record<string, boolean> {
-  try {
-    const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}");
-    return v && typeof v === "object" ? v : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveCollapsed(v: Record<string, boolean>) {
-  try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(v));
-  } catch {
-    /* private mode etc. - collapse state just isn't remembered */
-  }
-}
 
 const matches = (needle: string, name: I18nText, tags?: string[]) =>
   !needle ||
   name.en.toLowerCase().includes(needle) ||
   name.pl.toLowerCase().includes(needle) ||
   !!tags?.some((x) => x.includes(needle));
-
-/** Collapsible header shared by asset and texture groups. */
-function GroupHeader({ group, open, count, onToggle }: { group: AssetGroupInfo; open: boolean; count: number; onToggle: () => void }) {
-  const { t, lang } = useI18n();
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={open}
-      title={group.description?.[lang] ?? group.name[lang]}
-      data-testid={`group-toggle-${group.id}`}
-      className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-xs font-semibold text-slate-300 hover:text-slate-100"
-    >
-      <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="shrink-0 text-slate-500" />
-      <span className="min-w-0 flex-1 truncate">{group.name[lang]}</span>
-      {group.locked && (
-        <span className="flex items-center gap-0.5 text-[10px] font-normal text-amber-400" title={t("editor.library.lockedCta")}>
-          <Icon name="lock" size={12} />
-        </span>
-      )}
-      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-normal text-slate-400">{count}</span>
-    </button>
-  );
-}
 
 function LockedGroup({ items, count }: { items: CatalogItem[]; count: number }) {
   const { t, lang } = useI18n();
@@ -146,40 +105,6 @@ function LockedGroup({ items, count }: { items: CatalogItem[]; count: number }) 
       </Link>
     </div>
   );
-}
-
-function LibraryStatus() {
-  const { t } = useI18n();
-  const { user } = useSession();
-  const status = useAssets((s) => s.status);
-  if (status === "error") {
-    return (
-      <div className="rounded-lg bg-red-900/40 p-3 text-xs text-red-100">
-        <p className="mb-2">{t("editor.library.loadError")}</p>
-        <button onClick={() => void useAssets.getState().load(user, { force: true })} className="rounded bg-slate-700 px-2 py-1 font-semibold">
-          {t("editor.library.retry")}
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="grid grid-cols-3 gap-2" aria-label={t("editor.library.loading")}>
-      {Array.from({ length: 9 }, (_, i) => (
-        <div key={i} className="h-[88px] animate-pulse rounded-lg bg-slate-800" />
-      ))}
-    </div>
-  );
-}
-
-function useCollapsed() {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(readCollapsed);
-  const toggle = (key: string) =>
-    setCollapsed((c) => {
-      const next = { ...c, [key]: !c[key] };
-      saveCollapsed(next);
-      return next;
-    });
-  return [collapsed, toggle] as const;
 }
 
 function Library() {
@@ -357,21 +282,16 @@ function Uploads() {
 }
 
 function Background() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const doc = useEditor((s) => s.doc);
   const setDoc = useEditor((s) => s.setDoc);
   const beginGesture = useEditor((s) => s.beginGesture);
   const endGesture = useEditor((s) => s.endGesture);
   const status = useAssets((s) => s.status);
-  const groups = useAssets((s) => s.groups);
-  const patterns = useAssets((s) => s.patterns);
-  const locked = useAssets((s) => s.locked);
-  const [collapsed, toggle] = useCollapsed();
   if (!doc) return null;
   const bg = doc.background;
   const setBg = (patch: Partial<typeof bg>, history = true) =>
     setDoc((d) => ({ ...d, background: { ...d.background, ...patch } }), { history });
-  const textureGroups = groups.filter((g) => g.patternCount > 0);
 
   return (
     <div className="space-y-4">
@@ -396,51 +316,7 @@ function Background() {
           {t("editor.bg.none")}
         </button>
         {status !== "ready" && <LibraryStatus />}
-        {textureGroups.map((g) => {
-          const open = !collapsed[`p:${g.id}`];
-          const items = g.locked
-            ? locked.filter((c) => c.group === g.id && c.kind === "pattern")
-            : patterns.filter((p) => p.group === g.id && !p.hidden);
-          return (
-            <section key={g.id} data-testid={`texture-group-${g.id}`}>
-              <GroupHeader group={g} open={open} count={items.length} onToggle={() => toggle(`p:${g.id}`)} />
-              {open && (
-                <div className="mt-1.5 grid grid-cols-3 gap-2">
-                  {g.locked
-                    ? items.map((p) => (
-                        <Link
-                          key={p.id}
-                          href="/login"
-                          title={t("editor.library.lockedCta")}
-                          className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg bg-slate-800/60 text-center text-[10px] text-slate-500 ring-1 ring-slate-700"
-                        >
-                          <Icon name="lock" size={16} />
-                          {p.name[lang]}
-                        </Link>
-                      ))
-                    : (items as PatternDef[]).map((p) => (
-                        <button
-                          key={p.id}
-                          onClick={() => setBg({ pattern: p.id })}
-                          title={p.name[lang]}
-                          className={cx("relative overflow-hidden rounded-lg ring-2", bg.pattern === p.id ? "ring-amber-500" : "ring-transparent hover:ring-slate-600")}
-                        >
-                          <svg viewBox={`0 0 ${p.size * 2} ${p.size * 2}`} className="aspect-square w-full">
-                            <defs>
-                              <pattern id={`thumb-${p.id}`} width={p.size} height={p.size} patternUnits="userSpaceOnUse">
-                                <g dangerouslySetInnerHTML={{ __html: p.body }} />
-                              </pattern>
-                            </defs>
-                            <rect width={p.size * 2} height={p.size * 2} fill={`url(#thumb-${p.id})`} />
-                          </svg>
-                          <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] text-white">{p.name[lang]}</span>
-                        </button>
-                      ))}
-                </div>
-              )}
-            </section>
-          );
-        })}
+        <TextureGrid value={bg.pattern} onPick={(id) => setBg({ pattern: id })} testPrefix="texture-group" />
       </div>
       {bg.pattern && (
         <div>

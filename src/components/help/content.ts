@@ -134,11 +134,33 @@ export const HELP_EN: HelpSection[] = [
         list: [
           "Text (T) — click to place a label, then type. Double-click a label to edit it. Font, size, colour and a readability halo are in Properties.",
           "Rectangle (R) and Ellipse (O) — drag to draw areas such as rooms, lakes or zones of effect. Shift draws a square/circle.",
-          "Freehand / walls (P) — draw rivers, roads, cave walls or paths. Hold Shift for a straight line. Paths can be closed and filled.",
+          "Freehand / walls (P) — draw thin lines such as cave walls or borders. Hold Shift for a straight line. Paths can be closed and filled.",
+          "Brush (B) and Eraser (X) — paint rivers, roads, paths and terrain by hand with a colour or a texture. See “Painting with the brush” below.",
           "Measure (M) — drag to measure a distance. MapForge uses the D&D 5e rule (diagonals count as one cell) and 5 ft per cell.",
           "Pan (H) — drag to move the view. You can also hold Space or the middle mouse button with any tool.",
         ],
       },
+    ],
+  },
+  {
+    id: "painting",
+    title: "Painting with the brush",
+    blocks: [
+      "The Brush (B) paints by hand — rivers, streams, roads, dirt paths, lava flows, patches of sand, grass or snow. Pick the Brush in the toolbar; its settings appear in the right panel.",
+      {
+        list: [
+          "Presets — one click sets up a River, Stream, Road, Dirt path, Lava, Sand, Grass, Snow or Wall brush. Presets whose texture is in the extended pack paint with colour for guests (marked with a lock).",
+          "Paint — a colour, a texture from the library, or an image from My files (logged-in users; it repeats as square tiles). The base colour shows under the texture and is used whenever the texture can't be shown. Textures are anchored to the map, so strokes that touch continue the same pattern.",
+          "Size is set in grid cells, so a brush fits any map. [ and ] make it smaller or bigger while painting; the outline under the pointer shows the size.",
+          "Soft edges feather the stroke for natural blending, Smoothing evens out a shaky hand, and Edge adds an outline along the stroke — river banks, road kerbs, a lava crust.",
+          "Paint on layer decides where strokes go (Terrain by default, so objects and tokens stay on top).",
+          "Join matching strokes — a stroke that starts on paint of the same brush becomes part of it, so forks, junctions and crossings have no seams or doubled edges.",
+          "Shift + drag draws a straight line; Shift + click draws a straight line from where the previous stroke ended (with snapping on, the end snaps to the grid).",
+        ],
+      },
+      "The Eraser (X) removes paint from brush strokes on visible, unlocked layers — drag across a river to make a ford, or tidy an edge. A stroke erased completely is removed. Erasing is kept inside the stroke, so it can be undone with Ctrl+Z or later with “Restore erased parts”.",
+      "Every painted stroke is a normal item: select it to move, rotate, scale, change its layer, or restyle it (size, paint, texture scale, softness, edge). “Paint with this brush” copies a stroke's look back into the brush.",
+      { tip: "Paint rivers and roads on the Terrain layer, then place bridges and trees from the library on the Objects layer above them." },
     ],
   },
   {
@@ -207,6 +229,7 @@ export const HELP_EN: HelpSection[] = [
       {
         keys: [
           ["V / H / T / R / O / P / M", "Select / Pan / Text / Rectangle / Ellipse / Freehand / Measure"],
+          ["B / X", "Brush / Eraser"],
           ["Ctrl + click, Shift + click", "Add / remove item from selection"],
           ["Ctrl + A", "Select all"],
           ["Esc", "Clear selection, back to Select tool"],
@@ -215,7 +238,7 @@ export const HELP_EN: HelpSection[] = [
           ["Ctrl + D", "Duplicate"],
           ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
           ["Arrows / Shift + arrows", "Nudge 1 px / one cell"],
-          ["[ / ]", "Scale selection −10% / +10%"],
+          ["[ / ]", "Scale selection −10% / +10% (with the brush or eraser: smaller / bigger brush)"],
           ["Q / E (Shift)", "Rotate −15° / +15° (90°)"],
           ["PgUp / PgDn / Home / End", "Forward / backward / to back / to front"],
           ["L", "Lock / unlock selection"],
@@ -366,11 +389,33 @@ export const HELP_PL: HelpSection[] = [
         list: [
           "Tekst (T) — kliknij, aby dodać napis, i pisz. Kliknij dwukrotnie napis, aby go edytować. Czcionka, rozmiar, kolor i poświata poprawiająca czytelność są we Właściwościach.",
           "Prostokąt (R) i Elipsa (O) — przeciągnij, aby narysować pomieszczenia, jeziora czy obszary działania czarów. Shift rysuje kwadrat/koło.",
-          "Rysowanie / ściany (P) — rysuj rzeki, drogi, ściany jaskiń lub ścieżki. Shift rysuje linię prostą. Ścieżki można zamknąć i wypełnić.",
+          "Rysowanie / ściany (P) — rysuj cienkie linie, np. ściany jaskiń lub granice. Shift rysuje linię prostą. Ścieżki można zamknąć i wypełnić.",
+          "Pędzel (B) i Gumka (X) — maluj ręcznie rzeki, drogi, ścieżki i teren kolorem albo teksturą. Szczegóły w części „Malowanie pędzlem” poniżej.",
           "Pomiar (M) — przeciągnij, aby zmierzyć odległość. MapForge stosuje zasadę D&D 5e (przekątna liczy się jako jedno pole) i 5 stóp na pole.",
           "Przesuwanie widoku (H) — przeciągnij, aby przesunąć widok. Możesz też przytrzymać Spację lub środkowy przycisk myszy przy dowolnym narzędziu.",
         ],
       },
+    ],
+  },
+  {
+    id: "painting",
+    title: "Malowanie pędzlem",
+    blocks: [
+      "Pędzel (B) pozwala malować ręcznie — rzeki, strumienie, drogi, ścieżki, potoki lawy, płaty piasku, trawy czy śniegu. Wybierz Pędzel na pasku narzędzi; jego ustawienia pojawią się w prawym panelu.",
+      {
+        list: [
+          "Gotowe pędzle — jedno kliknięcie ustawia pędzel Rzeka, Strumień, Droga, Ścieżka, Lawa, Piasek, Trawa, Śnieg lub Mur. Pędzle z teksturą z rozszerzonego pakietu malują gościom samym kolorem (oznaczone kłódką).",
+          "Farba — kolor, tekstura z biblioteki albo obraz z Moich plików (dla zalogowanych; powtarza się jako kwadratowe kafelki). Kolor bazowy widać pod teksturą i jest używany, gdy tekstury nie da się pokazać. Tekstury są zakotwiczone w mapie, więc stykające się pociągnięcia mają ciągły wzór.",
+          "Rozmiar podaje się w polach siatki, więc pędzel pasuje do każdej mapy. [ i ] zmniejszają i zwiększają go w trakcie malowania; obrys pod kursorem pokazuje rozmiar.",
+          "Miękkie krawędzie rozmywają brzeg pociągnięcia, Wygładzanie wyrównuje drżenie ręki, a Obrzeże dodaje obwódkę wzdłuż pociągnięcia — brzegi rzeki, krawężniki, skorupę lawy.",
+          "Maluj na warstwie decyduje, gdzie trafiają pociągnięcia (domyślnie Teren, więc obiekty i żetony są nad nimi).",
+          "Łącz pasujące pociągnięcia — pociągnięcie zaczęte na farbie tego samego pędzla staje się jego częścią, więc rozwidlenia, skrzyżowania i połączenia nie mają szwów ani podwójnych brzegów.",
+          "Shift + przeciągnięcie rysuje linię prostą; Shift + klik rysuje linię prostą od końca poprzedniego pociągnięcia (przy włączonym przyciąganiu koniec trafia w siatkę).",
+        ],
+      },
+      "Gumka (X) zmazuje farbę z pociągnięć pędzla na widocznych i odblokowanych warstwach — przeciągnij przez rzekę, aby zrobić bród, albo popraw krawędź. Całkiem zmazane pociągnięcie znika. Zmazania są zapisane w pociągnięciu, więc cofniesz je Ctrl+Z albo później przyciskiem „Przywróć zmazane fragmenty”.",
+      "Każde namalowane pociągnięcie to zwykły element: zaznacz je, aby przesunąć, obrócić, przeskalować, zmienić warstwę albo wygląd (rozmiar, farbę, skalę tekstury, miękkość, obrzeże). „Maluj tym pędzlem” kopiuje wygląd pociągnięcia z powrotem do pędzla.",
+      { tip: "Maluj rzeki i drogi na warstwie Teren, a mosty i drzewa z biblioteki stawiaj nad nimi na warstwie Obiekty." },
     ],
   },
   {
@@ -439,6 +484,7 @@ export const HELP_PL: HelpSection[] = [
       {
         keys: [
           ["V / H / T / R / O / P / M", "Zaznaczanie / Przesuwanie / Tekst / Prostokąt / Elipsa / Rysowanie / Pomiar"],
+          ["B / X", "Pędzel / Gumka"],
           ["Ctrl + klik, Shift + klik", "Dodaj / usuń element z zaznaczenia"],
           ["Ctrl + A", "Zaznacz wszystko"],
           ["Esc", "Wyczyść zaznaczenie, wróć do zaznaczania"],
@@ -447,7 +493,7 @@ export const HELP_PL: HelpSection[] = [
           ["Ctrl + D", "Duplikuj"],
           ["Ctrl + Z / Ctrl + Shift + Z", "Cofnij / ponów"],
           ["Strzałki / Shift + strzałki", "Przesuń o 1 px / jedno pole"],
-          ["[ / ]", "Skaluj zaznaczenie −10% / +10%"],
+          ["[ / ]", "Skaluj zaznaczenie −10% / +10% (przy pędzlu lub gumce: mniejszy / większy pędzel)"],
           ["Q / E (Shift)", "Obróć −15° / +15° (90°)"],
           ["PgUp / PgDn / Home / End", "Do przodu / do tyłu / na spód / na wierzch"],
           ["L", "Zablokuj / odblokuj zaznaczenie"],

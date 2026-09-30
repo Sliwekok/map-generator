@@ -13,6 +13,7 @@ import { contentOf, createMap, deleteMap, LimitError, listCloudMaps, listLocalMa
 import { toast } from "@/lib/client/toasts";
 import { parseProject } from "@/lib/editor/export";
 import { LIMITS } from "@/lib/limits";
+import { remapElementUploads } from "@/lib/uploadRefs";
 import type { MapContent, MapDoc, SessionUser } from "@/lib/types";
 import { Button } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/Icon";
@@ -22,11 +23,7 @@ import NewMapWizard from "@/components/NewMapWizard";
 function remapUploads(content: MapContent, mapping: Record<string, string>): MapContent {
   return {
     ...content,
-    elements: content.elements.map((e) =>
-      e.type === "asset" && e.assetId.startsWith("u:") && mapping[e.assetId.slice(2)]
-        ? { ...e, assetId: `u:${mapping[e.assetId.slice(2)]}` }
-        : e,
-    ),
+    elements: content.elements.map((e) => remapElementUploads(e, mapping)),
   };
 }
 

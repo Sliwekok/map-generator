@@ -1,8 +1,9 @@
 import { memo } from "react";
-import type { AssetDef, MapContent, MapElement, PatternDef } from "@/lib/types";
+import type { AssetDef, BrushElement, MapContent, MapElement, PatternDef } from "@/lib/types";
 import { LAYER_ORDER } from "@/lib/types";
 import { FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { pathD } from "@/lib/editor/geometry";
+import { featherOf, mainSize, smoothD } from "@/lib/editor/brushShape";
 
 export interface RenderLookups {
   assets: Record<string, AssetDef>;
@@ -86,13 +87,13 @@ export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, a
                   <ElementView
                     key={el.id}
                     el={el}
+                    idPrefix={idPrefix}
                     interactive={interactive}
                     inert={locked || !!el.locked}
                     asset={el.type === "asset" ? assets[el.assetId] : undefined}
+                    pattern={el.type === "brush" && el.texture && !el.texture.startsWith("u:") ? patterns[el.texture] : undefined}
                     pending={assetsPending}
-                    uploadUrl={
-                      el.type === "asset" && el.assetId.startsWith("u:") ? uploadUrlOf(uploads, el.assetId.slice(2)) : undefined
-                    }
+                    uploadUrl={uploadRef(el) ? uploadUrlOf(uploads, uploadRef(el)!) : undefined}
                   />
                 ) : null,
               )}
@@ -123,11 +124,47 @@ export function gridPath(w: number, h: number, size: number): string {
 
 const round = (n: number) => Math.round(n * 100) / 100;
 
+/** One element drawn on its own (e.g. the stroke being painted, on the editor's overlay layer). */
+export function ElementPreview({
+  el,
+  idPrefix,
+  patterns,
+  uploads,
+}: {
+  el: MapElement;
+  idPrefix: string;
+  patterns: RenderLookups["patterns"];
+  uploads: RenderLookups["uploads"];
+}) {
+  const ref = uploadRef(el);
+  return (
+    <ElementView
+      el={el}
+      idPrefix={idPrefix}
+      inert
+      pattern={el.type === "brush" && el.texture && !el.texture.startsWith("u:") ? patterns[el.texture] : undefined}
+      uploadUrl={ref ? uploadUrlOf(uploads, ref) : undefined}
+    />
+  );
+}
+
+/** Upload id an element draws from: an uploaded image, or a brush texture from My files. */
+function uploadRef(el: MapElement): string | undefined {
+  if (el.type === "asset" && el.assetId.startsWith("u:")) return el.assetId.slice(2);
+  if (el.type === "brush" && el.texture?.startsWith("u:")) return el.texture.slice(2);
+  return undefined;
+}
+
 interface ElProps {
   el: MapElement;
+  /** Unique per rendered map - brush masks / patterns are referenced by id. */
+  idPrefix?: string;
   interactive?: boolean;
   inert: boolean;
   asset?: AssetDef;
+  /** Brush texture from the library. */
+  pattern?: PatternDef;
+  /** Uploaded image, or the brush texture when it comes from My files. */
   uploadUrl?: string;
   pending?: boolean;
 }
@@ -143,7 +180,7 @@ export function elementTransform(el: MapElement): string {
   return t;
 }
 
-export const ElementView = memo(function ElementView({ el, interactive, inert, asset, uploadUrl, pending }: ElProps) {
+export const ElementView = memo(function ElementView({ el, idPrefix = "m", interactive, inert, asset, pattern, uploadUrl, pending }: ElProps) {
   const w = el.width;
   const h = el.height;
   let content: React.ReactNode = null;
@@ -249,6 +286,9 @@ export const ElementView = memo(function ElementView({ el, interactive, inert, a
       );
       break;
     }
+    case "brush":
+      content = <BrushView el={el} uid={`${idPrefix}-${el.id}`} pattern={pattern} textureUrl={uploadUrl} interactive={interactive} />;
+      break;
   }
 
   return (
@@ -259,7 +299,124 @@ export const ElementView = memo(function ElementView({ el, interactive, inert, a
       pointerEvents={interactive && inert ? "none" : undefined}
     >
       {content}
-      {interactive && el.type !== "path" && <rect width={w} height={h} fill="transparent" />}
+      {interactive && el.type !== "path" && el.type !== "brush" && <rect width={w} height={h} fill="transparent" />}
     </g>
   );
 });
+
+/**
+ * A painted element. Without eraser passes it is plain SVG strokes: edge colour, then paint
+ * colour, then texture. With eraser passes every pass is drawn into a mask (white = paint,
+ * black = eraser, in order) that reveals the colour / texture, with a wider mask below it for
+ * the edge. Textures are anchored to the map, so strokes that touch continue seamlessly.
+ */
+function BrushView({
+  el,
+  uid,
+  pattern,
+  textureUrl,
+  interactive,
+}: {
+  el: BrushElement;
+  uid: string;
+  pattern?: PatternDef;
+  textureUrl?: string;
+  interactive?: boolean;
+}) {
+  const w = el.width;
+  const h = el.height;
+  const spread = featherOf(el.softness, mainSize(el));
+  // Filter regions are in user space: a straight horizontal stroke has a zero-height bbox.
+  const edge = el.edge && el.edgeWidth ? el.edgeWidth : 0;
+  const ts = el.textureSize || 70;
+  const hasTexture = !!el.texture && (!!pattern || !!textureUrl);
+  const paths = el.ops.map((o) => smoothD(o.points));
+  const round3 = { fill: "none", strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
+  const texture = hasTexture && (
+    <pattern id={`${uid}-p`} patternUnits="userSpaceOnUse" width={ts} height={ts} patternTransform={`translate(${round(-el.x)} ${round(-el.y)})`}>
+      {pattern ? (
+        <svg width={ts} height={ts} viewBox={`0 0 ${pattern.size} ${pattern.size}`} preserveAspectRatio="none" dangerouslySetInnerHTML={{ __html: pattern.body }} />
+      ) : (
+        <image href={textureUrl} width={ts} height={ts} preserveAspectRatio="xMidYMid slice" />
+      )}
+    </pattern>
+  );
+  const hit = interactive && (
+    <g {...round3} stroke="transparent">
+      {el.ops.map((o, i) => (o.erase ? null : <path key={i} d={paths[i]} strokeWidth={Math.max(o.size + edge * 2, 12)} />))}
+    </g>
+  );
+
+  // Nothing erased: plain strokes - far cheaper for the browser to draw and to repaint while
+  // panning or zooming than masks. Soft edges blur the solid colours only; the texture sits on
+  // the solid core, so it is painted once and stays sharp.
+  const std = round((spread * 2) / 3);
+  const filters = std > 0.2 && (
+    <>
+      <filter id={`${uid}-f`} filterUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+        <feGaussianBlur stdDeviation={std} />
+      </filter>
+      {edge > 0 && (
+        <filter id={`${uid}-fi`} filterUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+          <feGaussianBlur stdDeviation={round(std * 0.35)} />
+        </filter>
+      )}
+    </>
+  );
+  const outer = filters ? `url(#${uid}-f)` : undefined;
+  const inner = filters ? `url(#${uid}-${edge > 0 ? "fi" : "f"})` : undefined;
+  if (!el.ops.some((o) => o.erase)) {
+    const strokes = (paint: string, extra: number, filter: string | undefined, shrink = 0) => (
+      <g {...round3} stroke={paint} filter={filter}>
+        {el.ops.map((o, i) => (
+          <path key={i} d={paths[i]} strokeWidth={round(Math.max(0.5, o.size + extra - shrink))} />
+        ))}
+      </g>
+    );
+    const core = filters ? (edge > 0 ? std * 0.7 : std * 2) : 0;
+    return (
+      <>
+        {(texture || filters) && (
+          <defs>
+            {filters}
+            {texture}
+          </defs>
+        )}
+        {edge > 0 && strokes(el.edge!, edge * 2, outer)}
+        {strokes(el.color, 0, inner)}
+        {texture && strokes(`url(#${uid}-p)`, 0, undefined, core)}
+        {hit}
+      </>
+    );
+  }
+
+  // Erased parts need a mask: white = paint, black = eraser, in order, feathered by a blur.
+  const mask = (extra: number, filter: string | undefined) => (
+    <g {...round3} filter={filter}>
+      {el.ops.map((o, i) => (
+        <path key={i} d={paths[i]} stroke={o.erase ? "#000" : "#fff"} strokeWidth={o.erase ? o.size : o.size + extra} />
+      ))}
+    </g>
+  );
+  return (
+    <>
+      <defs>
+        {filters}
+        <mask id={`${uid}-m`} maskUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+          {mask(0, inner)}
+        </mask>
+        {edge > 0 && (
+          <mask id={`${uid}-e`} maskUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+            {mask(edge * 2, outer)}
+          </mask>
+        )}
+        {texture}
+      </defs>
+      {edge > 0 && <rect width={w} height={h} fill={el.edge!} mask={`url(#${uid}-e)`} />}
+      <rect width={w} height={h} fill={el.color} mask={`url(#${uid}-m)`} />
+      {texture && <rect width={w} height={h} fill={`url(#${uid}-p)`} mask={`url(#${uid}-m)`} />}
+      {hit}
+    </>
+  );
+}

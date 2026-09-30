@@ -69,6 +69,8 @@ const P: Record<string, string> = {
   archive: "M4 4h16v4H4zM5 8v12h14V8M10 12h4",
   search: "M11 4a7 7 0 110 14 7 7 0 010-14zM21 21l-5-5",
   sliders: "M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4",
+  brush: "M19 3.5a1.8 1.8 0 012.5 2.5L13 14.5 10.5 12zM9.5 13l2.5 2.5c-.4 2.9-2.6 5-7.5 5 1.2-1.3 1.2-2.8 1.6-4.2.5-1.8 1.9-3.3 3.4-3.3z",
+  eraser: "M15.5 4l5.5 5.5-9 9H7l-4-4zM10 20h11M9 10.5l5.5 5.5",
 };
 
 export function Icon({ name, size = 18, className }: { name: keyof typeof P | string; size?: number; className?: string }) {

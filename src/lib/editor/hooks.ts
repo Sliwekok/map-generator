@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { saveMap } from "@/lib/client/repo";
 import { useEditor } from "./store";
+import { useBrush } from "./brushStore";
 
 const DEBOUNCE_MS = 700;
 const MAX_WAIT_MS = 3000;
@@ -153,10 +154,12 @@ export function useShortcuts() {
           s.nudge(0, e.shiftKey ? g : 1);
           break;
         case "[":
-          s.scaleSelection(1 / 1.1);
+          if (s.tool === "brush" || s.tool === "eraser") useBrush.getState().grow(1 / 1.2, s.tool === "eraser");
+          else s.scaleSelection(1 / 1.1);
           break;
         case "]":
-          s.scaleSelection(1.1);
+          if (s.tool === "brush" || s.tool === "eraser") useBrush.getState().grow(1.2, s.tool === "eraser");
+          else s.scaleSelection(1.1);
           break;
         case "PageUp":
           s.reorder("forward");
@@ -191,6 +194,8 @@ export function useShortcuts() {
             case "r": s.setTool("rect"); break;
             case "o": s.setTool("ellipse"); break;
             case "p": s.setTool("pen"); break;
+            case "b": s.setTool("brush"); break;
+            case "x": s.setTool("eraser"); break;
             case "m": s.setTool("measure"); break;
             case "g": s.setShowGrid(!s.showGrid); break;
             case "s": s.setSnap(!s.snap); break;

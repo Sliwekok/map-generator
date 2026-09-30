@@ -1,4 +1,4 @@
-import type { MapElement, TextElement } from "@/lib/types";
+import type { BrushElement, MapElement, TextElement } from "@/lib/types";
 
 export interface Pt {
   x: number;
@@ -119,8 +119,27 @@ export function scaleElement(el: MapElement, sx: number, sy: number, pivot: Pt, 
     const kx = width / el.width;
     const ky = height / el.height;
     next.points = el.points.map(([px, py]) => [px * kx, py * ky] as [number, number]);
+  } else if (el.type === "brush") {
+    return { ...scaleBrushContent(el, width / el.width, height / el.height), x: next.x, y: next.y, width, height };
   }
   return next;
+}
+
+/**
+ * Scales the painted content of a brush element by kx / ky in its own axes. Stroke widths,
+ * edges and texture tiles use the geometric mean, so a uniform scale keeps the look exactly.
+ */
+export function scaleBrushContent(el: BrushElement, kx: number, ky: number): BrushElement {
+  const k = Math.sqrt(Math.abs(kx * ky));
+  const r = (n: number) => Math.round(n * 10) / 10;
+  return {
+    ...el,
+    width: el.width * kx,
+    height: el.height * ky,
+    ops: el.ops.map((o) => ({ ...o, size: Math.max(0.5, o.size * k), points: o.points.map(([x, y]) => [r(x * kx), r(y * ky)] as [number, number]) })),
+    textureSize: el.textureSize ? Math.max(2, el.textureSize * k) : el.textureSize,
+    edgeWidth: el.edgeWidth ? Math.max(0.5, el.edgeWidth * k) : el.edgeWidth,
+  };
 }
 
 export function rotateElementAround(el: MapElement, pivot: Pt, deg: number): MapElement {

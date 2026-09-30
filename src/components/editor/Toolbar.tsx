@@ -15,6 +15,8 @@ const TOOLS: { id: Tool; icon: string; key: TKey }[] = [
   { id: "rect", icon: "rect", key: "editor.tools.rect" },
   { id: "ellipse", icon: "ellipse", key: "editor.tools.ellipse" },
   { id: "pen", icon: "pen", key: "editor.tools.pen" },
+  { id: "brush", icon: "brush", key: "editor.tools.brush" },
+  { id: "eraser", icon: "eraser", key: "editor.tools.eraser" },
   { id: "measure", icon: "ruler", key: "editor.tools.measure" },
 ];
 

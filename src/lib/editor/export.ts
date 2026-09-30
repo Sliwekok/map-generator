@@ -7,15 +7,12 @@ import { MapRenderer, type RenderLookups } from "@/components/map/MapRenderer";
 import type { MapContent } from "@/lib/types";
 import { sanitizeMapContent } from "@/lib/mapContent";
 import { uploadAsDataUrl } from "@/lib/client/uploads";
+import { uploadIdsOf } from "@/lib/uploadRefs";
 
 export const MAX_CANVAS_SIDE = 16384;
 export const MAX_CANVAS_AREA = 16384 * 8192;
 
-function usedUploadIds(doc: MapContent): string[] {
-  const ids = new Set<string>();
-  for (const e of doc.elements) if (e.type === "asset" && e.assetId.startsWith("u:")) ids.add(e.assetId.slice(2));
-  return [...ids];
-}
+const usedUploadIds = (doc: MapContent) => uploadIdsOf(doc.elements);
 
 async function inlineUploads(doc: MapContent): Promise<Record<string, { url: string } | null>> {
   const out: Record<string, { url: string } | null> = {};

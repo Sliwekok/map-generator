@@ -40,6 +40,15 @@ export const LIMITS = {
     maxNameLength: 80,
     maxPayloadBytes: 4 * 1024 * 1024,
   },
+  brush: {
+    /** Brush + eraser passes kept in one painted element. */
+    maxOps: 400,
+    /** Points in one pass (longer strokes are simplified harder). */
+    maxOpPoints: 3000,
+    /** Points across all passes of one element. */
+    maxPoints: 30000,
+    maxSize: 2000,
+  },
 } as const;
 
 export const ALLOWED_UPLOAD_TYPES = [

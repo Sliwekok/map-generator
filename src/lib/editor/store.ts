@@ -16,7 +16,7 @@ import {
 import { relayoutText } from "./text";
 import { contentOf } from "@/lib/client/repo";
 
-export type Tool = "select" | "pan" | "text" | "rect" | "ellipse" | "pen" | "measure";
+export type Tool = "select" | "pan" | "text" | "rect" | "ellipse" | "pen" | "brush" | "eraser" | "measure";
 export type SaveState = "saved" | "saving" | "pending" | "error" | "offline" | "conflict";
 
 export interface View {

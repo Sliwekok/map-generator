@@ -8,6 +8,7 @@ Vector-based map editor for D&D and other tabletop RPGs. Next.js 16 (React 19, A
 - **Guests**: up to 3 maps stored in the browser (IndexedDB), no uploads. **Users**: up to 20 maps stored in MongoDB, My files (500 images, 5 MB each, 200 MB total, 300 folders), plus asset groups with `"access": "user"` (currently the extended pack: 36 assets + 6 textures). SVGs of a group are only sent to users allowed to use it.
 - **New-map wizard**: page size in px (presets) → grid yes/no + cell size (70 px Roll20, 100 px Foundry, …, lines/dots) → name/background.
 - **Editor**: SVG canvas (everything is vector), wheel zoom at cursor, pan (Space / middle mouse / H), drag & drop from the library or from the OS, click-to-add, Ctrl/Shift+click multi-select, marquee selection, move with grid snapping (Alt = free), resize/rotate handles for one or many items, scale buttons & `[ ]`, align/distribute, z-order, flip, lock, 5 layers (hide/lock), text, rectangle, ellipse, freehand/walls, D&D 5e measuring ruler, undo/redo (150 steps), copy/paste/duplicate, background colours & tiled textures, tintable tokens.
+- **Brush painter** (B / X): paint rivers, roads, paths, lava, sand… by hand with a colour, a library texture or an image from My files. Presets, size in grid cells (`[ ]`), soft edges, smoothing, edge outline (banks/kerbs), target layer, auto-joining of matching strokes (seamless forks), Shift = straight lines. The eraser stores its passes inside the stroke (undoable, "Restore erased parts"). Strokes are normal items (`type: "brush"`, ordered paint/erase passes — see `src/lib/editor/brush.ts`); the stroke being painted is drawn on a separate overlay layer and committed on release.
 - **Page & grid settings**: change resolution any time — scale everything, or resize the canvas with a 9-point anchor.
 - **Autosave**: debounced (~0.7 s, max 3 s) to IndexedDB (guest) or `PUT /api/maps/:id` (user) with optimistic concurrency (`revision`) → conflicts between tabs/devices are detected, not silently overwritten.
 - **My files** (logged-in users only): real folder tree (nest up to 8 levels), create / rename / delete folders, rename files, multi-select (checkboxes, Ctrl/⌘/Shift-click, Ctrl+A), bulk move ("Move to…" tree picker or drag onto a folder / breadcrumb) and bulk delete, search across all folders. Available in the editor's left panel and on the full-width `/files` page.
@@ -48,13 +49,14 @@ src/
     api/assets            asset library: all groups, bodies only for usable ones, body-less catalog for locked ones
     editor/[id]           editor page
   components/
-    editor/               canvas, toolbar, panels, dialogs
+    editor/               canvas, toolbar, panels, dialogs, BrushPanel.tsx (brush / eraser settings)
     map/MapRenderer.tsx   single SVG renderer used by editor, thumbnails, home demo and export
   lib/
     assets/importer.ts    the one asset importer (scans + validates assets/)
     assets/access.ts      access level -> who may use a group
     server/assets.ts      cached registry, per-user library, dev hot reload
-    editor/               zustand store, geometry, autosave & shortcuts hooks, export
+    editor/               zustand store, geometry, autosave & shortcuts hooks, export,
+                          brush.ts (painting: passes, merging, erasing, smoothing), brushStore.ts (brush settings)
     client/               API client, IndexedDB storage, file store (uploads.ts), session
     files: components/files/FileBrowser.tsx (shared browser) + FileDialogs.tsx (name / move dialogs)
     server/               db connection, models, auth, http helpers,
