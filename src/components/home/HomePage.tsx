@@ -102,7 +102,7 @@ export default function HomePage() {
         <div className="grid gap-5 md:grid-cols-2">
           {plan(
             t("home.guestPlan"),
-            t("home.guestItems", { maps: LIMITS.anonymous.maxMaps, assets: FREE_ASSETS.length, uploads: LIMITS.anonymous.maxUploads }),
+            t("home.guestItems", { maps: LIMITS.anonymous.maxMaps, assets: FREE_ASSETS.length }),
           )}
           {plan(
             t("home.userPlan"),

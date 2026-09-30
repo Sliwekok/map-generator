@@ -43,6 +43,7 @@ export default function Navbar() {
         <div className="hidden items-center gap-1 sm:flex">
           {link("/", t("nav.home"))}
           {link("/maps", t("nav.maps"))}
+          {user && link("/files", t("nav.files"))}
           {link("/help", t("nav.help"))}
         </div>
         <div className="flex-1" />
@@ -87,6 +88,7 @@ export default function Navbar() {
       <div className="flex gap-1 px-4 pb-2 sm:hidden">
         {link("/", t("nav.home"))}
         {link("/maps", t("nav.maps"))}
+        {user && link("/files", t("nav.files"))}
         {link("/help", t("nav.help"))}
       </div>
     </nav>

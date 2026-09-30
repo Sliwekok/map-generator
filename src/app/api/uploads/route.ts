@@ -1,75 +1,70 @@
-import mongoose from "mongoose";
 import { getSessionUser } from "@/lib/server/auth";
-import { uploadsBucket, type UploadMeta } from "@/lib/server/gridfs";
-import { error, handler, json } from "@/lib/server/http";
+import { assertSameOrigin, error, folderIdParam, handler, json, rateLimit } from "@/lib/server/http";
+import { extractArchive, loadTree, toFolderInfo, toUploadInfo, uploadImage, usageOf } from "@/lib/server/files";
 import { LIMITS } from "@/lib/limits";
-import { sanitizeSvg, sniffImageType, svgSize } from "@/lib/uploadCheck";
-import type { UploadInfo } from "@/lib/types";
+import { fileKind } from "@/lib/fileNames";
+import { detectArchive } from "@/lib/server/archive";
 
-type FileDoc = { _id: mongoose.Types.ObjectId; length: number; metadata?: UploadMeta };
-
-function toInfo(f: FileDoc): UploadInfo {
-  const id = f._id.toString();
-  return {
-    id,
-    name: f.metadata?.originalName ?? "upload",
-    contentType: f.metadata?.contentType ?? "application/octet-stream",
-    width: f.metadata?.width ?? 256,
-    height: f.metadata?.height ?? 256,
-    size: f.length,
-    source: "cloud",
-    url: `/api/uploads/${id}`,
-  };
-}
-
+/** The whole file tree of the user (folders + files + usage). Small enough to send at once. */
 export const GET = handler(async () => {
   const user = await getSessionUser();
   if (!user) return error(401, "unauthorized");
-  const bucket = await uploadsBucket();
-  const files = (await bucket.find({ "metadata.owner": user.id }).sort({ uploadDate: -1 }).toArray()) as unknown as FileDoc[];
-  return json({ uploads: files.map(toInfo), limit: LIMITS.user.maxUploads, maxBytes: LIMITS.user.maxUploadBytes });
+  const tree = await loadTree(user.id);
+  return json({
+    folders: [...tree.folders.values()].map(toFolderInfo),
+    uploads: tree.files.map(toUploadInfo),
+    usage: usageOf(tree),
+    limits: {
+      maxFiles: LIMITS.user.maxUploads,
+      maxBytes: LIMITS.user.maxUploadBytes,
+      maxStorageBytes: LIMITS.user.maxStorageBytes,
+      maxArchiveBytes: LIMITS.files.maxArchiveBytes,
+      maxFolders: LIMITS.files.maxFolders,
+      maxFolderDepth: LIMITS.files.maxFolderDepth,
+    },
+  });
 });
 
-// POST multipart/form-data: file, width?, height?
+// POST multipart/form-data: file (image or .zip/.tar/.tar.gz archive), folderId? (empty = root)
 export const POST = handler(async (req: Request) => {
+  assertSameOrigin(req);
   const user = await getSessionUser();
   if (!user) return error(401, "unauthorized");
-  const form = await req.formData().catch(() => null);
-  const file = form?.get("file");
-  if (!(file instanceof File)) return error(400, "no_file");
-  if (file.size > LIMITS.user.maxUploadBytes) return error(413, "file_too_large", { maxBytes: LIMITS.user.maxUploadBytes });
+  if (!rateLimit(`upload:${user.id}`, 120, 60_000)) return error(429, "rate_limited");
 
-  let bytes: Uint8Array = new Uint8Array(await file.arrayBuffer());
-  const type = sniffImageType(bytes);
-  if (!type) return error(415, "unsupported_type");
-
-  let width = Math.round(Number(form?.get("width")) || 0);
-  let height = Math.round(Number(form?.get("height")) || 0);
-  if (type === "image/svg+xml") {
-    const text = sanitizeSvg(new TextDecoder().decode(bytes));
-    bytes = new TextEncoder().encode(text);
-    const s = svgSize(text);
-    if (s && (!width || !height)) ({ width, height } = { width: Math.round(s.width), height: Math.round(s.height) });
+  // Reject oversized bodies before buffering them.
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (declared > LIMITS.files.maxArchiveBytes + 64 * 1024) {
+    return error(413, "archive_too_large", { maxBytes: LIMITS.files.maxArchiveBytes });
   }
-  width = Math.min(Math.max(width || 256, 1), 20000);
-  height = Math.min(Math.max(height || 256, 1), 20000);
+  if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("multipart/form-data")) {
+    return error(415, "multipart_required");
+  }
+  const form = await req.formData().catch(() => null);
+  if (!form) return error(400, "invalid_form");
+  const files = form.getAll("file");
+  if (files.length !== 1 || !(files[0] instanceof File)) return error(400, "no_file");
+  const file = files[0];
+  const folderId = folderIdParam(form.get("folderId"));
+  const name = typeof file.name === "string" ? file.name : "upload";
 
-  const bucket = await uploadsBucket();
-  const count = (await bucket.find({ "metadata.owner": user.id }).toArray()).length;
-  if (count >= LIMITS.user.maxUploads) return error(403, "upload_limit", { limit: LIMITS.user.maxUploads });
+  // Size limits depend on what the file claims to be; the content decides what it is.
+  const kind = fileKind(name);
+  if (file.size === 0) return error(422, "empty_file");
+  if (kind === "archive" && file.size > LIMITS.files.maxArchiveBytes) {
+    return error(413, "archive_too_large", { maxBytes: LIMITS.files.maxArchiveBytes });
+  }
+  if (kind !== "archive" && file.size > LIMITS.user.maxUploadBytes) {
+    return error(413, "file_too_large", { maxBytes: LIMITS.user.maxUploadBytes });
+  }
+  const bytes = Buffer.from(await file.arrayBuffer());
 
-  const meta: UploadMeta = {
-    owner: user.id,
-    contentType: type,
-    width,
-    height,
-    originalName: file.name.slice(0, 120) || "upload",
-  };
-  const id = await new Promise<mongoose.Types.ObjectId>((resolve, reject) => {
-    const stream = bucket.openUploadStream(meta.originalName, { metadata: meta });
-    stream.once("finish", () => resolve(stream.id as mongoose.Types.ObjectId));
-    stream.once("error", reject);
-    stream.end(Buffer.from(bytes));
-  });
-  return json({ upload: toInfo({ _id: id, length: bytes.length, metadata: meta }) }, 201);
+  if (kind === "archive") {
+    if (!detectArchive(bytes)) return error(415, "unsupported_type");
+    const result = await extractArchive(user.id, bytes, folderId);
+    return json(result, 201);
+  }
+  // Anything else must really be an image, whatever its extension says.
+  const result = await uploadImage(user.id, name, new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), folderId);
+  return json(result, 201);
 });

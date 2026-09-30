@@ -27,8 +27,29 @@ const mapSchema = new Schema(
   { timestamps: true, minimize: false },
 );
 
+// Virtual directories for uploaded files. Files live in GridFS ("uploads" bucket) and point to
+// their folder through metadata.folderId (null / missing = root). Owner and parent are stored as
+// hex id strings - the same form GridFS file metadata uses (metadata.owner / metadata.folderId).
+const folderSchema = new Schema(
+  {
+    owner: { type: String, required: true, index: true, match: /^[a-f0-9]{24}$/ },
+    name: { type: String, required: true, maxlength: 100 },
+    // Lower-cased name: sibling folder names must be unique case-insensitively.
+    nameKey: { type: String, required: true, maxlength: 100 },
+    parent: { type: String, default: null, match: /^[a-f0-9]{24}$/ },
+  },
+  { timestamps: true },
+);
+folderSchema.index({ owner: 1, parent: 1, nameKey: 1 }, { unique: true });
+
 export type UserDocument = InferSchemaType<typeof userSchema> & { _id: mongoose.Types.ObjectId };
 export type MapDocument = InferSchemaType<typeof mapSchema> & {
+  _id: mongoose.Types.ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type FolderDocument = InferSchemaType<typeof folderSchema> & {
   _id: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -39,3 +60,6 @@ export const User: Model<UserDocument> =
 
 export const MapModel: Model<MapDocument> =
   (mongoose.models.Map as Model<MapDocument>) ?? mongoose.model<MapDocument>("Map", mapSchema);
+
+export const Folder: Model<FolderDocument> =
+  (mongoose.models.Folder as Model<FolderDocument>) ?? mongoose.model<FolderDocument>("Folder", folderSchema);

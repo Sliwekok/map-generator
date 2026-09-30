@@ -9,6 +9,7 @@ export interface HelpSection {
 
 const A = LIMITS.anonymous;
 const U = LIMITS.user;
+const F = LIMITS.files;
 const mb = (n: number) => `${n / 1024 / 1024} MB`;
 
 export const HELP_EN: HelpSection[] = [
@@ -19,8 +20,8 @@ export const HELP_EN: HelpSection[] = [
       "MapForge is a browser-based editor for battle maps used in Dungeons & Dragons and other tabletop RPGs. Everything you place on a map is a vector (SVG), so maps stay sharp at any zoom level and export resolution.",
       {
         list: [
-          `Guests (no account): up to ${A.maxMaps} maps, saved in this browser (IndexedDB), the free asset pack, up to ${A.maxUploads} uploaded files of max ${mb(A.maxUploadBytes)} each.`,
-          `Logged-in users: up to ${U.maxMaps} maps saved in the cloud (available on every device), the extended asset pack with extra assets and textures, up to ${U.maxUploads} uploaded files of max ${mb(U.maxUploadBytes)} each.`,
+          `Guests (no account): up to ${A.maxMaps} maps, saved in this browser (IndexedDB), and the free asset pack. Uploading your own files requires an account.`,
+          `Logged-in users: up to ${U.maxMaps} maps saved in the cloud (available on every device), the extended asset pack with extra assets and textures, and My files: up to ${U.maxUploads} images (max ${mb(U.maxUploadBytes)} each, ${mb(U.maxStorageBytes)} in total) organised in folders.`,
           "After signing in you can import the maps you created as a guest into your account from the “My maps” page.",
         ],
       },
@@ -74,16 +75,21 @@ export const HELP_EN: HelpSection[] = [
   },
   {
     id: "uploads",
-    title: "Using your own files",
+    title: "My files: your own images, folders and archives",
     blocks: [
-      "Open My files and click “Upload files”, or drop image files straight onto the map. Supported formats: PNG, JPG, WEBP, GIF and SVG. SVG files stay vectors; raster images keep their original resolution.",
+      "Uploading your own images requires an account. Open My files in the editor's left panel, or the full-size My files page from the top menu. Supported images: PNG, JPG, WEBP, GIF and SVG. SVG files stay vectors; raster images keep their original resolution.",
       {
         list: [
-          "Dropping a file on the map uploads it and places it where you dropped it.",
-          "Large images (for example a hand-drawn map) are fitted to the page and put on the Background layer; smaller ones become objects.",
-          "Guest files are stored in the browser, account files in the database. Deleting a file removes it from every map that uses it.",
-          "For security, uploaded SVGs are cleaned of scripts and are always displayed as images.",
+          `Click “Upload” or drop files onto the file browser — they go into the folder that is open. Dropping an image on the map uploads it to the open folder and places it where you dropped it.`,
+          `Archives (ZIP, TAR, TAR.GZ, up to ${mb(F.maxArchiveBytes)}) are unpacked on upload: the folders inside the archive are recreated in the open folder (merged with folders of the same name) and every supported image is added. Other files are skipped and listed after the upload.`,
+          "Create folders with “New folder”; nest them up to " + F.maxFolderDepth + " levels deep. Rename files and folders with the pencil icon (or F2).",
+          "Select several items with the checkboxes, Ctrl/⌘ + click or Shift + click (Ctrl/⌘ + A selects everything in the folder). Move them with “Move to…” or by dragging them onto a folder or a breadcrumb; delete them with the Delete key. Deleting a folder deletes everything inside it.",
+          "Click an image in the editor panel to add it to the centre of the view, or drag it (or several selected images) onto the map.",
+          "Large images (for example a hand-drawn map) are fitted to the page and put on the Background layer; smaller ones become objects. Deleting a file removes it from every map that uses it.",
         ],
+      },
+      {
+        tip: `Limits: ${U.maxUploads} images, ${mb(U.maxUploadBytes)} per image, ${mb(U.maxStorageBytes)} in total, ${F.maxFolders} folders, ${F.maxArchiveFiles} images per archive. Every file is checked on the server: the real format is detected from its content (not its name), damaged or oversized images are rejected, SVGs are cleaned of scripts, and archive entries that try to escape their folder are ignored.`,
       },
     ],
   },
@@ -246,8 +252,8 @@ export const HELP_PL: HelpSection[] = [
       "MapForge to działający w przeglądarce edytor map bitewnych do Dungeons & Dragons i innych gier fabularnych. Wszystko, co umieszczasz na mapie, jest wektorem (SVG), więc mapy pozostają ostre przy każdym przybliżeniu i rozdzielczości eksportu.",
       {
         list: [
-          `Goście (bez konta): do ${A.maxMaps} map zapisanych w tej przeglądarce (IndexedDB), darmowy pakiet grafik, do ${A.maxUploads} własnych plików po maks. ${mb(A.maxUploadBytes)}.`,
-          `Zalogowani: do ${U.maxMaps} map zapisanych w chmurze (dostępnych na każdym urządzeniu), rozszerzony pakiet z dodatkowymi elementami i teksturami, do ${U.maxUploads} plików po maks. ${mb(U.maxUploadBytes)}.`,
+          `Goście (bez konta): do ${A.maxMaps} map zapisanych w tej przeglądarce (IndexedDB) i darmowy pakiet grafik. Wgrywanie własnych plików wymaga konta.`,
+          `Zalogowani: do ${U.maxMaps} map zapisanych w chmurze (dostępnych na każdym urządzeniu), rozszerzony pakiet z dodatkowymi elementami i teksturami oraz Moje pliki: do ${U.maxUploads} obrazów (maks. ${mb(U.maxUploadBytes)} każdy, łącznie ${mb(U.maxStorageBytes)}) w folderach.`,
           "Po zalogowaniu możesz zaimportować mapy utworzone jako gość na swoje konto — na stronie „Moje mapy”.",
         ],
       },
@@ -301,16 +307,21 @@ export const HELP_PL: HelpSection[] = [
   },
   {
     id: "uploads",
-    title: "Własne pliki",
+    title: "Moje pliki: własne obrazy, foldery i archiwa",
     blocks: [
-      "Otwórz Moje pliki i kliknij „Wgraj pliki” albo upuść obrazy prosto na mapę. Obsługiwane formaty: PNG, JPG, WEBP, GIF i SVG. Pliki SVG pozostają wektorami, obrazy rastrowe zachowują oryginalną rozdzielczość.",
+      "Wgrywanie własnych obrazów wymaga konta. Otwórz Moje pliki w lewym panelu edytora albo pełną stronę Moje pliki z górnego menu. Obsługiwane obrazy: PNG, JPG, WEBP, GIF i SVG. Pliki SVG pozostają wektorami, obrazy rastrowe zachowują oryginalną rozdzielczość.",
       {
         list: [
-          "Upuszczenie pliku na mapę wgrywa go i umieszcza w miejscu upuszczenia.",
-          "Duże obrazy (np. ręcznie rysowana mapa) są dopasowywane do strony i trafiają na warstwę Tło; mniejsze stają się obiektami.",
-          "Pliki gościa są przechowywane w przeglądarce, pliki konta — w bazie danych. Usunięcie pliku usuwa go ze wszystkich map, które go używają.",
-          "Ze względów bezpieczeństwa wgrane pliki SVG są oczyszczane ze skryptów i zawsze wyświetlane jako obrazy.",
+          "Kliknij „Wgraj” lub upuść pliki na przeglądarkę plików — trafią do otwartego folderu. Upuszczenie obrazu na mapę wgrywa go do otwartego folderu i umieszcza w miejscu upuszczenia.",
+          `Archiwa (ZIP, TAR, TAR.GZ, do ${mb(F.maxArchiveBytes)}) są rozpakowywane przy wgrywaniu: foldery z archiwum są odtwarzane w otwartym folderze (łączone z folderami o tej samej nazwie), a każdy obsługiwany obraz jest dodawany. Pozostałe pliki są pomijane i wypisywane po wgraniu.`,
+          "Twórz foldery przyciskiem „Nowy folder”; możesz je zagnieżdżać do " + F.maxFolderDepth + " poziomów. Nazwę pliku lub folderu zmienisz ikoną ołówka (lub F2).",
+          "Zaznacz kilka elementów polami wyboru, Ctrl/⌘ + klik lub Shift + klik (Ctrl/⌘ + A zaznacza wszystko w folderze). Przenieś je przyciskiem „Przenieś do…” albo przeciągając na folder lub ścieżkę u góry; usuń klawiszem Delete. Usunięcie folderu usuwa całą jego zawartość.",
+          "Kliknij obraz w panelu edytora, aby dodać go na środek widoku, lub przeciągnij go (albo kilka zaznaczonych obrazów) na mapę.",
+          "Duże obrazy (np. ręcznie rysowana mapa) są dopasowywane do strony i trafiają na warstwę Tło; mniejsze stają się obiektami. Usunięcie pliku usuwa go ze wszystkich map, które go używają.",
         ],
+      },
+      {
+        tip: `Limity: ${U.maxUploads} obrazów, ${mb(U.maxUploadBytes)} na obraz, łącznie ${mb(U.maxStorageBytes)}, ${F.maxFolders} folderów, ${F.maxArchiveFiles} obrazów w jednym archiwum. Każdy plik jest sprawdzany na serwerze: prawdziwy format jest rozpoznawany po zawartości (nie po nazwie), uszkodzone lub zbyt duże obrazy są odrzucane, pliki SVG są oczyszczane ze skryptów, a pozycje archiwum próbujące wyjść poza swój folder są ignorowane.`,
       },
     ],
   },

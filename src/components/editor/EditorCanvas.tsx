@@ -517,8 +517,15 @@ export default function EditorCanvas() {
       const def = useAssets.getState().byId[assetId];
       if (def) s.addElements([assetElement(def, world, s.doc, s.snap)]);
       else {
-        const up = useUploads.getState().byId[assetId.replace(/^u:/, "")];
-        if (up) s.addElements([uploadElement(up, world, s.doc, s.snap)]);
+        // One or more uploads ("u:<id>" per line) dragged from My files.
+        const g = s.doc.grid.size || 70;
+        const els = assetId
+          .split("\n")
+          .slice(0, 50)
+          .map((id) => useUploads.getState().byId[id.trim().replace(/^u:/, "")])
+          .filter((up): up is NonNullable<typeof up> => !!up)
+          .map((up, i) => uploadElement(up, { x: world.x + (i * g) / 2, y: world.y + (i * g) / 2 }, s.doc!, s.snap));
+        if (els.length) s.addElements(els);
       }
       return;
     }

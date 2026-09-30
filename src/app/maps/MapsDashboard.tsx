@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/client/session";
 import { useAssets } from "@/lib/client/assets";
-import { useUploads, dataUrlToFile } from "@/lib/client/uploads";
+import { useUploads, dataUrlToFile, uploadOne } from "@/lib/client/uploads";
 import { localDb } from "@/lib/client/localDb";
 import { ApiError } from "@/lib/client/api";
 import { contentOf, createMap, deleteMap, LimitError, listCloudMaps, listLocalMaps, renameMap } from "@/lib/client/repo";
@@ -30,11 +30,13 @@ function remapUploads(content: MapContent, mapping: Record<string, string>): Map
   };
 }
 
+/** Uploads the images embedded in a project file (logged-in users only; guests can't store files). */
 async function uploadForImport(user: SessionUser | null, files: { id: string; file: File }[]) {
   const mapping: Record<string, string> = {};
+  if (!user) return mapping;
   for (const f of files) {
     try {
-      const info = await useUploads.getState().upload(user, f.file);
+      const info = await uploadOne(user, f.file, null);
       mapping[f.id] = info.id;
     } catch {
       /* missing images show as placeholders */
@@ -123,14 +125,8 @@ export default function MapsDashboard({ openWizard = false }: { openWizard?: boo
     let n = 0;
     try {
       for (const m of local) {
-        const ids = [...new Set(m.elements.flatMap((e) => (e.type === "asset" && e.assetId.startsWith("u:lu_") ? [e.assetId.slice(2)] : [])))];
-        const files: { id: string; file: File }[] = [];
-        for (const id of ids) {
-          const row = await localDb.getUpload(id);
-          if (row) files.push({ id, file: new File([row.blob], row.name, { type: row.contentType }) });
-        }
-        const mapping = await uploadForImport(user, files);
-        await createMap(user, remapUploads(contentOf(m), mapping));
+        // Guest maps have no uploaded images any more (guests can't upload), so the content is copied as is.
+        await createMap(user, contentOf(m));
         await localDb.deleteMap(m.id);
         n++;
       }
@@ -147,6 +143,7 @@ export default function MapsDashboard({ openWizard = false }: { openWizard?: boo
     try {
       const project = parseProject(await file.text());
       const files = Object.entries(project.uploads).map(([id, u]) => ({ id, file: dataUrlToFile(u.dataUrl, u.name) }));
+      if (files.length && !user) toast(t("maps.importNoImages"), "info");
       const mapping = await uploadForImport(user, files);
       const doc = await createMap(user, remapUploads(project.map, mapping));
       toast(t("editor.exportDlg.importOk"), "success");

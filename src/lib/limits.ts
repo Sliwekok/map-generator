@@ -1,15 +1,37 @@
 // Product limits shared by client and server. The server always re-checks them.
 
 export const LIMITS = {
+  // Guests keep their maps in the browser; uploading files requires an account.
   anonymous: {
     maxMaps: 3,
-    maxUploads: 10,
-    maxUploadBytes: 2 * 1024 * 1024,
   },
   user: {
     maxMaps: 20,
-    maxUploads: 60,
+    /** Max number of stored files (images) per user. */
+    maxUploads: 500,
+    /** Max size of one image. */
     maxUploadBytes: 5 * 1024 * 1024,
+    /** Max total size of all stored files per user. */
+    maxStorageBytes: 200 * 1024 * 1024,
+  },
+  files: {
+    /** Max size of an uploaded archive (compressed). */
+    maxArchiveBytes: 50 * 1024 * 1024,
+    /** Max entries (files + directories, incl. skipped ones) an archive may list. */
+    maxArchiveEntries: 1000,
+    /** Max images extracted from one archive. */
+    maxArchiveFiles: 300,
+    /** Max total unpacked size read from one archive (zip-bomb guard). */
+    maxArchiveUnpackedBytes: 100 * 1024 * 1024,
+    maxFolders: 300,
+    /** Root-level folders have depth 1. */
+    maxFolderDepth: 8,
+    maxNameLength: 100,
+    /** Max files + folders in one move / delete request. */
+    maxBatchItems: 1000,
+    /** Largest accepted image side and pixel count (decompression-bomb guard). */
+    maxImageSide: 16384,
+    maxImagePixels: 100_000_000,
   },
   map: {
     minSize: 100,

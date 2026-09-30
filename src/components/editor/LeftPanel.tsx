@@ -1,18 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useI18n, type TKey } from "@/lib/i18n";
 import { useAssets } from "@/lib/client/assets";
-import { useUploads } from "@/lib/client/uploads";
 import { useSession } from "@/lib/client/session";
 import { useEditor } from "@/lib/editor/store";
 import { assetElement, uploadElement } from "@/lib/editor/factory";
-import { formatBytes, uploadFiles } from "@/lib/editor/actions";
 import { ASSET_CATEGORIES, type AssetCategory, type AssetDef, type UploadInfo } from "@/lib/types";
-import { LIMITS } from "@/lib/limits";
 import { Icon } from "@/components/ui/Icon";
-import { Button, ColorField, cx, Label, Slider } from "@/components/ui/controls";
+import { ColorField, cx, Label, Slider } from "@/components/ui/controls";
+import FileBrowser from "@/components/files/FileBrowser";
 import { ASSET_MIME } from "./EditorCanvas";
 
 type Tab = "library" | "uploads" | "background";
@@ -176,97 +174,37 @@ function Library() {
 function Uploads() {
   const { t } = useI18n();
   const { user } = useSession();
-  const local = useUploads((s) => s.local);
-  const cloud = useUploads((s) => s.cloud);
-  const remove = useUploads((s) => s.remove);
-  const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const limits = user ? LIMITS.user : LIMITS.anonymous;
-  const mine = user ? cloud : local;
-  const others = user ? local : [];
-
-  const onFiles = async (files: File[]) => {
-    setBusy(true);
-    await uploadFiles(files, user, t, null);
-    setBusy(false);
-  };
 
   const add = (u: UploadInfo) => {
     const s = useEditor.getState();
     if (s.doc) s.addElements([uploadElement(u, viewCenter(), s.doc, s.snap)]);
   };
 
-  const list = (items: UploadInfo[]) => (
-    <div className="grid grid-cols-2 gap-2">
-      {items.map((u) => (
-        <div key={u.id} className="group relative rounded-lg bg-slate-800 p-1.5 ring-1 ring-slate-700 hover:ring-amber-500">
-          <button
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData(ASSET_MIME, `u:${u.id}`);
-              e.dataTransfer.effectAllowed = "copy";
-            }}
-            onClick={() => add(u)}
-            className="block w-full"
-            title={u.name}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={u.url} alt={u.name} className="aspect-square w-full rounded bg-[repeating-conic-gradient(#334155_0_25%,#1e293b_0_50%)] bg-[length:16px_16px] object-contain" />
-            <span className="mt-1 line-clamp-1 block text-[10px] text-slate-300">{u.name}</span>
-          </button>
-          <button
-            title={t("common.delete")}
-            onClick={async () => {
-              if (confirm(t("editor.uploads.deleteConfirm"))) await remove(user, u.id);
-            }}
-            className="absolute right-1 top-1 hidden rounded bg-red-600 p-1 text-white group-hover:block"
-          >
-            <Icon name="trash" size={12} />
-          </button>
+  if (!user) {
+    return (
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100" data-testid="uploads-login">
+        <div className="mb-2 flex items-center gap-2 font-semibold">
+          <Icon name="lock" size={16} /> {t("files.loginTitle")}
         </div>
-      ))}
-    </div>
-  );
+        <p className="mb-3 text-xs">{t("files.loginText")}</p>
+        <div className="flex gap-2">
+          <Link href="/login" className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-slate-950">
+            {t("nav.login")}
+          </Link>
+          <Link href="/register" className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-100">
+            {t("nav.register")}
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className="space-y-3"
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        const files = Array.from(e.dataTransfer.files ?? []);
-        if (files.length) void onFiles(files);
-      }}
-    >
-      <input
-        ref={input}
-        type="file"
-        multiple
-        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,.svg"
-        className="hidden"
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          e.target.value = "";
-          if (files.length) void onFiles(files);
-        }}
-      />
-      <Button variant="primary" className="w-full" onClick={() => input.current?.click()} disabled={busy}>
-        <Icon name="upload" size={16} /> {busy ? t("common.loading") : t("editor.uploads.button")}
-      </Button>
-      <p className="text-xs text-slate-500">{t("editor.uploads.drop")}</p>
-      <p className="text-xs text-slate-400">
-        {t("editor.uploads.usage", { used: mine.length, max: limits.maxUploads, size: formatBytes(limits.maxUploadBytes) })}
-      </p>
-      {!user && <p className="text-xs text-amber-300/80">{t("editor.uploads.guestNote")}</p>}
-      {mine.length ? list(mine) : <p className="text-sm text-slate-500">{t("editor.uploads.empty")}</p>}
-      {others.length > 0 && (
-        <>
-          <Label className="pt-2">{t("maps.localSection")}</Label>
-          {list(others)}
-        </>
-      )}
+    <div className="space-y-2">
+      <FileBrowser variant="panel" onPick={add} assetMime={ASSET_MIME} />
+      <Link href="/files" target="_blank" className="flex items-center gap-1 text-xs text-slate-400 hover:text-amber-400">
+        <Icon name="folder" size={13} /> {t("files.title")} ↗
+      </Link>
     </div>
   );
 }

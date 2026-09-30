@@ -15,4 +15,13 @@ export interface UploadMeta {
   width: number;
   height: number;
   originalName: string;
+  /** Folder id (string) or null for the root. Missing on files uploaded before folders existed. */
+  folderId?: string | null;
+}
+
+/** Raw GridFS files collection, used for metadata updates (rename / move). */
+export async function uploadsFiles() {
+  const bucket = await uploadsBucket();
+  const db = mongoose.connection.db!;
+  return { bucket, files: db.collection("uploads.files") };
 }

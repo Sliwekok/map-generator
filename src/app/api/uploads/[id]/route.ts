@@ -1,7 +1,8 @@
 import mongoose from "mongoose";
 import { getSessionUser } from "@/lib/server/auth";
 import { uploadsBucket, type UploadMeta } from "@/lib/server/gridfs";
-import { error, handler, isObjectId, json } from "@/lib/server/http";
+import { assertSameOrigin, error, handler, isObjectId, json, readJson } from "@/lib/server/http";
+import { deleteItems, renameFile } from "@/lib/server/files";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -32,6 +33,7 @@ export const GET = handler(async (_req: Request, { params }: Ctx) => {
     headers: {
       "Content-Type": file.metadata.contentType,
       "Content-Length": String(file.length),
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.metadata.originalName ?? "file")}`,
       "Cache-Control": "private, max-age=31536000, immutable",
       "X-Content-Type-Options": "nosniff",
       // Uploaded SVGs must never run scripts even if opened directly.
@@ -40,13 +42,24 @@ export const GET = handler(async (_req: Request, { params }: Ctx) => {
   });
 });
 
-export const DELETE = handler(async (_req: Request, { params }: Ctx) => {
+/** Rename: { name } */
+export const PATCH = handler(async (req: Request, { params }: Ctx) => {
+  assertSameOrigin(req);
   const user = await getSessionUser();
   if (!user) return error(401, "unauthorized");
   const { id } = await params;
   if (!isObjectId(id)) return error(404, "not_found");
-  const { bucket, oid, file } = await findOwned(id, user.id);
-  if (!file) return error(404, "not_found");
-  await bucket.delete(oid);
+  const body = await readJson(req);
+  const upload = await renameFile(user.id, id.toLowerCase(), body.name);
+  return json({ upload });
+});
+
+export const DELETE = handler(async (req: Request, { params }: Ctx) => {
+  assertSameOrigin(req);
+  const user = await getSessionUser();
+  if (!user) return error(401, "unauthorized");
+  const { id } = await params;
+  if (!isObjectId(id)) return error(404, "not_found");
+  await deleteItems(user.id, [id.toLowerCase()], []);
   return json({ ok: true });
 });

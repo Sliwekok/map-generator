@@ -119,6 +119,46 @@ export interface UploadInfo {
   size: number;
   source: MapSource;
   url: string; // usable in <image href>
+  folderId: string | null; // null = root folder
+  createdAt: string;
+}
+
+export interface FolderInfo {
+  id: string;
+  name: string;
+  parentId: string | null; // null = root folder
+  createdAt: string;
+}
+
+export interface StorageUsage {
+  files: number;
+  bytes: number;
+  folders: number;
+}
+
+/** One file or folder that was not taken from an upload / archive, with the reason. */
+export interface SkippedEntry {
+  path: string;
+  reason:
+    | "not_image"
+    | "bad_type"
+    | "corrupt"
+    | "too_large"
+    | "dimensions"
+    | "unsafe_svg"
+    | "unsafe_path"
+    | "too_deep"
+    | "encrypted"
+    | "compression"
+    | "link"
+    | "special"
+    | "too_many_files";
+}
+
+export interface UploadResult {
+  uploads: UploadInfo[];
+  folders: FolderInfo[];
+  skipped: SkippedEntry[];
 }
 
 export interface SessionUser {
