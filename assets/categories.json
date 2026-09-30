@@ -1,0 +1,11 @@
+{
+  "categories": [
+    {"id": "terrain", "name": {"en": "Terrain", "pl": "Teren"}, "defaultLayer": "terrain"},
+    {"id": "nature", "name": {"en": "Nature", "pl": "Natura"}, "defaultLayer": "objects"},
+    {"id": "structures", "name": {"en": "Structures", "pl": "Budowle"}, "defaultLayer": "objects"},
+    {"id": "dungeon", "name": {"en": "Dungeon", "pl": "Loch"}, "defaultLayer": "objects"},
+    {"id": "furniture", "name": {"en": "Furniture", "pl": "Meble"}, "defaultLayer": "objects"},
+    {"id": "tokens", "name": {"en": "Tokens", "pl": "Żetony"}, "defaultLayer": "tokens"},
+    {"id": "markers", "name": {"en": "Markers", "pl": "Znaczniki"}, "defaultLayer": "labels"}
+  ]
+}

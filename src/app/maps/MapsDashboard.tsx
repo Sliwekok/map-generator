@@ -83,7 +83,7 @@ export default function MapsDashboard({ openWizard = false }: { openWizard?: boo
   }, [user, reloadKey]);
 
   useEffect(() => {
-    void useAssets.getState().loadPremium(user);
+    void useAssets.getState().load(user);
   }, [user]);
 
   useEffect(() => {

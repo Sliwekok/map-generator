@@ -5,7 +5,7 @@ Vector-based map editor for D&D and other tabletop RPGs. Next.js 16 (React 19, A
 ## Features
 
 - **Home, Help (EN/PL), Log in / Sign up, My maps, My files, Editor** pages; language switch EN ⇄ PL (cookie `mf_lang`).
-- **Guests**: up to 3 maps stored in the browser (IndexedDB), no uploads. **Users**: up to 20 maps stored in MongoDB, My files (500 images, 5 MB each, 200 MB total, 300 folders), plus the extended asset pack (36 assets + 6 textures) served only to logged-in users by `/api/assets/premium`.
+- **Guests**: up to 3 maps stored in the browser (IndexedDB), no uploads. **Users**: up to 20 maps stored in MongoDB, My files (500 images, 5 MB each, 200 MB total, 300 folders), plus asset groups with `"access": "user"` (currently the extended pack: 36 assets + 6 textures). SVGs of a group are only sent to users allowed to use it.
 - **New-map wizard**: page size in px (presets) → grid yes/no + cell size (70 px Roll20, 100 px Foundry, …, lines/dots) → name/background.
 - **Editor**: SVG canvas (everything is vector), wheel zoom at cursor, pan (Space / middle mouse / H), drag & drop from the library or from the OS, click-to-add, Ctrl/Shift+click multi-select, marquee selection, move with grid snapping (Alt = free), resize/rotate handles for one or many items, scale buttons & `[ ]`, align/distribute, z-order, flip, lock, 5 layers (hide/lock), text, rectangle, ellipse, freehand/walls, D&D 5e measuring ruler, undo/redo (150 steps), copy/paste/duplicate, background colours & tiled textures, tintable tokens.
 - **Page & grid settings**: change resolution any time — scale everything, or resize the canvas with a 9-point anchor.
@@ -45,14 +45,15 @@ src/
     api/uploads/move|delete  bulk move / delete of files + folders
     api/folders, [id]     create / rename / delete (recursive) folders
     files                 My files page
-    api/assets/premium    extended asset pack (catalog only for guests)
+    api/assets            asset library: all groups, bodies only for usable ones, body-less catalog for locked ones
     editor/[id]           editor page
   components/
     editor/               canvas, toolbar, panels, dialogs
     map/MapRenderer.tsx   single SVG renderer used by editor, thumbnails, home demo and export
   lib/
-    assets/free.ts        free SVG assets (bundled)
-    assets/premium.ts     premium SVG assets (server-only)
+    assets/importer.ts    the one asset importer (scans + validates assets/)
+    assets/access.ts      access level -> who may use a group
+    server/assets.ts      cached registry, per-user library, dev hot reload
     editor/               zustand store, geometry, autosave & shortcuts hooks, export
     client/               API client, IndexedDB storage, file store (uploads.ts), session
     files: components/files/FileBrowser.tsx (shared browser) + FileDialogs.tsx (name / move dialogs)
@@ -65,4 +66,4 @@ src/
     i18n/                 en.ts / pl.ts dictionaries (type-checked keys)
 ```
 
-Adding assets: append an entry to `src/lib/assets/free.ts` or `premium.ts` (100×100 viewBox SVG body, default size in grid cells, target layer, optional `tintable` using `currentColor`).
+Adding assets: drop SVG files into `assets/<group>/<category>/` and (optionally) describe them in that group's `group.json`; new groups are new folders. Access (free / logged-in), order and visibility are set per group. Full format: [`assets/README.md`](assets/README.md). Validate with `npm run assets:check` (also runs before `npm run build`).

@@ -1,0 +1,31 @@
+{
+  "name": {"en": "Basic pack", "pl": "Pakiet podstawowy"},
+  "access": "free",
+  "order": 10,
+  "assets": {
+    "rock": {"name": {"en": "Rock", "pl": "Skała"}},
+    "pond": {"name": {"en": "Pond", "pl": "Staw"}, "cells": [2,2]},
+    "tree": {"name": {"en": "Tree", "pl": "Drzewo"}, "cells": [2,2]},
+    "bush": {"name": {"en": "Bush", "pl": "Krzak"}},
+    "grass-tuft": {"name": {"en": "Grass tuft", "pl": "Kępa trawy"}, "layer": "terrain"},
+    "wall": {"name": {"en": "Stone wall", "pl": "Kamienny mur"}, "cells": [2,0.5]},
+    "door": {"name": {"en": "Door", "pl": "Drzwi"}, "cells": [1,0.3]},
+    "house": {"name": {"en": "House", "pl": "Dom"}, "cells": [3,2.5]},
+    "stairs": {"name": {"en": "Stairs", "pl": "Schody"}},
+    "chest": {"name": {"en": "Chest", "pl": "Skrzynia"}, "cells": [1,0.7]},
+    "pillar": {"name": {"en": "Pillar", "pl": "Kolumna"}},
+    "table": {"name": {"en": "Table", "pl": "Stół"}, "cells": [2,1]},
+    "chair": {"name": {"en": "Chair", "pl": "Krzesło"}, "cells": [0.6,0.6]},
+    "bed": {"name": {"en": "Bed", "pl": "Łóżko"}, "cells": [1,2]},
+    "token-hero": {"name": {"en": "Hero token", "pl": "Żeton bohatera"}, "defaultTint": "#2f6fd6"},
+    "token-monster": {"name": {"en": "Monster token", "pl": "Żeton potwora"}, "defaultTint": "#c0392b"},
+    "marker-x": {"name": {"en": "X marker", "pl": "Znacznik X"}, "defaultTint": "#c0392b"},
+    "campfire": {"name": {"en": "Campfire", "pl": "Ognisko"}, "layer": "objects"},
+    "pin": {"name": {"en": "Pin", "pl": "Pinezka"}, "defaultTint": "#8e44ad"}
+  },
+  "patterns": {
+    "grass": {"name": {"en": "Grass", "pl": "Trawa"}},
+    "cobble": {"name": {"en": "Cobblestone", "pl": "Bruk"}},
+    "parchment": {"name": {"en": "Parchment", "pl": "Pergamin"}}
+  }
+}

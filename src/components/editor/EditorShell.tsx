@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/client/session";
-import { useAssets } from "@/lib/client/assets";
+import { useAssets, useAssetsPending } from "@/lib/client/assets";
 import { useUploads } from "@/lib/client/uploads";
 import { loadMap } from "@/lib/client/repo";
 import { useEditor } from "@/lib/editor/store";
@@ -22,7 +22,10 @@ export default function EditorShell({ id }: { id: string }) {
   const { t } = useI18n();
   const { user } = useSession();
   const [result, setResult] = useState<{ id: string; status: "ready" | "missing" | "error" } | null>(null);
-  const status = result?.id === id ? result.status : "loading";
+  const assetsPending = useAssetsPending();
+  // The library is part of loading, so the canvas never flashes "?" for built-in assets.
+  const mapStatus = result?.id === id ? result.status : "loading";
+  const status = mapStatus === "ready" && assetsPending ? "loading" : mapStatus;
   const [settings, setSettings] = useState(false);
   const [exporting, setExporting] = useState(false);
   const saveState = useEditor((s) => s.saveState);
@@ -31,7 +34,7 @@ export default function EditorShell({ id }: { id: string }) {
   useShortcuts();
 
   useEffect(() => {
-    void useAssets.getState().loadPremium(user);
+    void useAssets.getState().load(user);
     // My files: list only the root folder up front; subfolders load when the user opens them.
     useUploads.getState().reset(user);
     if (user) void useUploads.getState().openFolder(null);

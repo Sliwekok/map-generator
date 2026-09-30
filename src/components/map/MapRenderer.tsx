@@ -12,6 +12,8 @@ export interface RenderLookups {
    * rendered straight from their API URL, so a map never waits for file metadata.
    */
   uploads: Record<string, { url: string } | null>;
+  /** The asset library is still loading: unknown built-in assets are left out instead of drawn as "?". */
+  assetsPending?: boolean;
 }
 
 const UPLOAD_ID = /^[a-f0-9]{24}$/i;
@@ -35,7 +37,7 @@ interface Props extends RenderLookups {
  * Used by the editor canvas, thumbnails, the home page demo and the SVG/PNG export,
  * so what you see is exactly what you export.
  */
-export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, assets, patterns, uploads }: Props) {
+export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, assets, patterns, uploads, assetsPending }: Props) {
   const { width, height, background, grid } = doc;
   const pattern = background.pattern ? patterns[background.pattern] : undefined;
   const tile = (grid.size || 70) * (background.patternScale || 1);
@@ -87,6 +89,7 @@ export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, a
                     interactive={interactive}
                     inert={locked || !!el.locked}
                     asset={el.type === "asset" ? assets[el.assetId] : undefined}
+                    pending={assetsPending}
                     uploadUrl={
                       el.type === "asset" && el.assetId.startsWith("u:") ? uploadUrlOf(uploads, el.assetId.slice(2)) : undefined
                     }
@@ -126,6 +129,7 @@ interface ElProps {
   inert: boolean;
   asset?: AssetDef;
   uploadUrl?: string;
+  pending?: boolean;
 }
 
 export function elementTransform(el: MapElement): string {
@@ -139,7 +143,7 @@ export function elementTransform(el: MapElement): string {
   return t;
 }
 
-export const ElementView = memo(function ElementView({ el, interactive, inert, asset, uploadUrl }: ElProps) {
+export const ElementView = memo(function ElementView({ el, interactive, inert, asset, uploadUrl, pending }: ElProps) {
   const w = el.width;
   const h = el.height;
   let content: React.ReactNode = null;
@@ -162,6 +166,8 @@ export const ElementView = memo(function ElementView({ el, interactive, inert, a
             dangerouslySetInnerHTML={{ __html: asset.body }}
           />
         );
+      } else if (pending && !el.assetId.startsWith("u:")) {
+        content = <rect width={w} height={h} fill="none" />;
       } else {
         content = (
           <g>

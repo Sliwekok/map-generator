@@ -4,18 +4,27 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useI18n, type TKey } from "@/lib/i18n";
 import { LIMITS } from "@/lib/limits";
-import { FREE_ASSETS, FREE_PATTERNS } from "@/lib/assets/free";
 import { MapRenderer } from "@/components/map/MapRenderer";
 import { Icon } from "@/components/ui/Icon";
+import type { AssetDef, PatternDef } from "@/lib/types";
 import { demoMap } from "./demoMap";
 
-const assets = Object.fromEntries(FREE_ASSETS.map((a) => [a.id, a]));
-const patterns = Object.fromEntries(FREE_PATTERNS.map((p) => [p.id, p]));
-const PREMIUM_COUNT = 36;
+interface Props {
+  /** Free assets / textures the demo map uses (the page is server-rendered from the asset registry). */
+  demoAssets: AssetDef[];
+  demoPatterns: PatternDef[];
+  /** A few free assets for the strip. */
+  strip: AssetDef[];
+  freeCount: number;
+  /** Assets + textures an account adds. */
+  accountExtra: number;
+}
 
-export default function HomePage() {
-  const { t } = useI18n();
+export default function HomePage({ demoAssets, demoPatterns, strip, freeCount, accountExtra }: Props) {
+  const { t, lang } = useI18n();
   const demo = useMemo(() => demoMap(t("home.demoLabel")), [t]);
+  const assets = useMemo(() => Object.fromEntries(demoAssets.map((a) => [a.id, a])), [demoAssets]);
+  const patterns = useMemo(() => Object.fromEntries(demoPatterns.map((p) => [p.id, p])), [demoPatterns]);
 
   const features: { icon: string; title: TKey; text: TKey }[] = [
     { icon: "scaleUp", title: "home.f1t", text: "home.f1d" },
@@ -86,8 +95,8 @@ export default function HomePage() {
       {/* asset strip */}
       <section className="border-y border-slate-800 bg-slate-900/60 py-10">
         <div className="mx-auto flex max-w-6xl flex-wrap justify-center gap-3 px-4">
-          {FREE_ASSETS.map((a) => (
-            <div key={a.id} className="h-16 w-16 rounded-lg bg-[#e8dcc0] p-2 ring-1 ring-slate-700" title={a.name.en}>
+          {strip.map((a) => (
+            <div key={a.id} className="h-16 w-16 rounded-lg bg-[#e8dcc0] p-2 ring-1 ring-slate-700" title={a.name[lang]}>
               <svg viewBox={a.viewBox} className="h-full w-full" style={{ color: a.defaultTint }}>
                 <g dangerouslySetInnerHTML={{ __html: a.body }} />
               </svg>
@@ -102,11 +111,11 @@ export default function HomePage() {
         <div className="grid gap-5 md:grid-cols-2">
           {plan(
             t("home.guestPlan"),
-            t("home.guestItems", { maps: LIMITS.anonymous.maxMaps, assets: FREE_ASSETS.length }),
+            t("home.guestItems", { maps: LIMITS.anonymous.maxMaps, assets: freeCount }),
           )}
           {plan(
             t("home.userPlan"),
-            t("home.userItems", { maps: LIMITS.user.maxMaps, premium: PREMIUM_COUNT, uploads: LIMITS.user.maxUploads }),
+            t("home.userItems", { maps: LIMITS.user.maxMaps, premium: accountExtra, uploads: LIMITS.user.maxUploads }),
             true,
           )}
         </div>

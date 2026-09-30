@@ -186,42 +186,78 @@ export interface SessionUser {
   name: string;
 }
 
+/**
+ * Who may use an asset group. Ordered from most to least open; `canUseAccess()` in
+ * lib/assets/access.ts decides per user. Add a level here (e.g. "premium") to introduce a new tier.
+ */
+export type AssetAccess = "free" | "user";
+export const ASSET_ACCESS_LEVELS: AssetAccess[] = ["free", "user"];
+
+export type I18nText = { en: string; pl: string };
+
+/** Asset category (assets/categories.json). */
+export interface AssetCategoryDef {
+  id: string;
+  name: I18nText;
+  defaultLayer: LayerId;
+}
+/** Category id from assets/categories.json. */
+export type AssetCategory = string;
+
 export interface AssetDef {
   id: string;
-  name: { en: string; pl: string };
+  name: I18nText;
   category: AssetCategory;
+  group: string; // asset group (folder in assets/)
   viewBox: string; // e.g. "0 0 100 100"
-  body: string; // inner SVG markup (trusted, built-in only)
+  body: string; // inner SVG markup (validated by the importer, built-in only)
   cells: [number, number]; // default size in grid cells
   layer: LayerId;
   tintable?: boolean; // uses currentColor
   defaultTint?: string;
-  premium?: boolean;
+  tags?: string[]; // extra search words
+  hidden?: boolean; // still renders on existing maps, not listed in the library
+  premium?: boolean; // group access is not "free"
 }
-
-export type AssetCategory =
-  | "terrain"
-  | "nature"
-  | "structures"
-  | "furniture"
-  | "dungeon"
-  | "tokens"
-  | "markers";
-
-export const ASSET_CATEGORIES: AssetCategory[] = [
-  "terrain",
-  "nature",
-  "structures",
-  "dungeon",
-  "furniture",
-  "tokens",
-  "markers",
-];
 
 export interface PatternDef {
   id: string;
-  name: { en: string; pl: string };
+  name: I18nText;
+  group: string;
   size: number; // tile size in its own units (viewBox is 0 0 size size)
   body: string;
+  hidden?: boolean;
   premium?: boolean;
+}
+
+/** One asset group as the client sees it. */
+export interface AssetGroupInfo {
+  id: string;
+  name: I18nText;
+  description?: I18nText;
+  access: AssetAccess;
+  order: number;
+  /** The current user may not use this group - only its body-less catalog is sent. */
+  locked: boolean;
+  assetCount: number; // listed (non-hidden) assets
+  patternCount: number;
+}
+
+/** Body-less entry of a locked group, so the UI can show what an account unlocks. */
+export interface CatalogItem {
+  id: string;
+  name: I18nText;
+  category: string; // asset category, or "pattern"
+  kind: "asset" | "pattern";
+  group: string;
+}
+
+/** GET /api/assets */
+export interface AssetLibrary {
+  version: string;
+  categories: AssetCategoryDef[];
+  groups: AssetGroupInfo[];
+  assets: AssetDef[];
+  patterns: PatternDef[];
+  locked: CatalogItem[];
 }

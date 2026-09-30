@@ -67,7 +67,7 @@ export const HELP_EN: HelpSection[] = [
         list: [
           "Filter the library by category or search by name.",
           "Tokens, markers and some other assets are tintable — change their colour in the Properties panel.",
-          "Assets marked ★ belong to the extended pack, available after logging in. Guests see what they would unlock at the bottom of the library.",
+          "The library is split into groups (packs) — click a group's name to fold it away. Groups with a lock, and assets marked ★, need a free account; guests see their names so they know what they would unlock.",
           "Background textures (grass, cobblestone, wood, water…) are chosen in the Background tab and tile at the grid size; adjust them with the texture scale slider.",
         ],
       },
@@ -235,7 +235,7 @@ export const HELP_EN: HelpSection[] = [
       {
         list: [
           "“You reached the limit” — delete a map you no longer need, or log in to raise the limit.",
-          "An asset shows as a red question mark — it comes from the extended pack (log in to see it) or refers to a file that was deleted.",
+          "An asset shows as a red question mark — it comes from a group that needs an account (log in to see it) or refers to a file that was deleted.",
           "I can't click an item — its layer or the item itself is probably locked. Check the lock icons in the Layers panel.",
           "Export is too large — browsers can't create images wider or taller than 16384 px. Use a smaller scale.",
         ],
@@ -299,7 +299,7 @@ export const HELP_PL: HelpSection[] = [
         list: [
           "Filtruj bibliotekę według kategorii lub szukaj po nazwie.",
           "Żetony, znaczniki i niektóre inne elementy można przebarwiać — kolor zmienisz w panelu Właściwości.",
-          "Elementy oznaczone ★ należą do rozszerzonego pakietu, dostępnego po zalogowaniu. Goście widzą na dole biblioteki, co mogą odblokować.",
+          "Biblioteka jest podzielona na grupy (pakiety) — kliknij nazwę grupy, aby ją zwinąć. Grupy z kłódką i elementy oznaczone ★ wymagają darmowego konta; goście widzą ich nazwy, więc wiedzą, co mogą odblokować.",
           "Tekstury tła (trawa, bruk, deski, woda…) wybierasz w zakładce Tło — powtarzają się co pole siatki, a ich wielkość zmienisz suwakiem skali.",
         ],
       },
@@ -467,7 +467,7 @@ export const HELP_PL: HelpSection[] = [
       {
         list: [
           "„Osiągnięto limit” — usuń niepotrzebną mapę lub zaloguj się, aby zwiększyć limit.",
-          "Element wyświetla się jako czerwony znak zapytania — pochodzi z rozszerzonego pakietu (zaloguj się, aby go zobaczyć) albo odwołuje się do usuniętego pliku.",
+          "Element wyświetla się jako czerwony znak zapytania — pochodzi z grupy wymagającej konta (zaloguj się, aby go zobaczyć) albo odwołuje się do usuniętego pliku.",
           "Nie mogę kliknąć elementu — prawdopodobnie jego warstwa lub on sam jest zablokowany. Sprawdź kłódki w panelu Warstwy.",
           "Eksport jest za duży — przeglądarki nie tworzą obrazów szerszych lub wyższych niż 16384 px. Wybierz mniejszą skalę.",
         ],

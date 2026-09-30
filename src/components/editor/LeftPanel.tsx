@@ -7,7 +7,7 @@ import { useAssets } from "@/lib/client/assets";
 import { useSession } from "@/lib/client/session";
 import { useEditor } from "@/lib/editor/store";
 import { assetElement, uploadElement } from "@/lib/editor/factory";
-import { ASSET_CATEGORIES, type AssetCategory, type AssetDef, type UploadInfo } from "@/lib/types";
+import type { AssetDef, AssetGroupInfo, CatalogItem, I18nText, PatternDef, UploadInfo } from "@/lib/types";
 import { Icon } from "@/components/ui/Icon";
 import { ColorField, cx, Label, Slider } from "@/components/ui/controls";
 import FileBrowser from "@/components/files/FileBrowser";
@@ -77,24 +77,158 @@ function AssetThumb({ asset }: { asset: AssetDef }) {
   );
 }
 
+/** Items rendered per group before "Show all" - keeps big libraries fast. */
+const GROUP_PAGE = 60;
+const COLLAPSED_KEY = "mf_lib_collapsed";
+
+function readCollapsed(): Record<string, boolean> {
+  try {
+    const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCollapsed(v: Record<string, boolean>) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(v));
+  } catch {
+    /* private mode etc. - collapse state just isn't remembered */
+  }
+}
+
+const matches = (needle: string, name: I18nText, tags?: string[]) =>
+  !needle ||
+  name.en.toLowerCase().includes(needle) ||
+  name.pl.toLowerCase().includes(needle) ||
+  !!tags?.some((x) => x.includes(needle));
+
+/** Collapsible header shared by asset and texture groups. */
+function GroupHeader({ group, open, count, onToggle }: { group: AssetGroupInfo; open: boolean; count: number; onToggle: () => void }) {
+  const { t, lang } = useI18n();
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      title={group.description?.[lang] ?? group.name[lang]}
+      data-testid={`group-toggle-${group.id}`}
+      className="flex w-full items-center gap-1.5 rounded-md py-1 text-left text-xs font-semibold text-slate-300 hover:text-slate-100"
+    >
+      <Icon name={open ? "chevronDown" : "chevronRight"} size={14} className="shrink-0 text-slate-500" />
+      <span className="min-w-0 flex-1 truncate">{group.name[lang]}</span>
+      {group.locked && (
+        <span className="flex items-center gap-0.5 text-[10px] font-normal text-amber-400" title={t("editor.library.lockedCta")}>
+          <Icon name="lock" size={12} />
+        </span>
+      )}
+      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-normal text-slate-400">{count}</span>
+    </button>
+  );
+}
+
+function LockedGroup({ items, count }: { items: CatalogItem[]; count: number }) {
+  const { t, lang } = useI18n();
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
+      <p className="mb-2 text-xs">{t("editor.library.groupLocked", { n: count })}</p>
+      <div className="mb-3 flex flex-wrap gap-1">
+        {items.slice(0, 12).map((c) => (
+          <span key={c.id} className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
+            🔒 {c.name[lang]}
+          </span>
+        ))}
+        {items.length > 12 && <span className="text-[10px] text-slate-400">+{items.length - 12}</span>}
+      </div>
+      <Link href="/login" className="inline-block rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-slate-950">
+        {t("editor.library.lockedCta")}
+      </Link>
+    </div>
+  );
+}
+
+function LibraryStatus() {
+  const { t } = useI18n();
+  const { user } = useSession();
+  const status = useAssets((s) => s.status);
+  if (status === "error") {
+    return (
+      <div className="rounded-lg bg-red-900/40 p-3 text-xs text-red-100">
+        <p className="mb-2">{t("editor.library.loadError")}</p>
+        <button onClick={() => void useAssets.getState().load(user, { force: true })} className="rounded bg-slate-700 px-2 py-1 font-semibold">
+          {t("editor.library.retry")}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-3 gap-2" aria-label={t("editor.library.loading")}>
+      {Array.from({ length: 9 }, (_, i) => (
+        <div key={i} className="h-[88px] animate-pulse rounded-lg bg-slate-800" />
+      ))}
+    </div>
+  );
+}
+
+function useCollapsed() {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(readCollapsed);
+  const toggle = (key: string) =>
+    setCollapsed((c) => {
+      const next = { ...c, [key]: !c[key] };
+      saveCollapsed(next);
+      return next;
+    });
+  return [collapsed, toggle] as const;
+}
+
 function Library() {
   const { t, lang } = useI18n();
-  const { user } = useSession();
+  const status = useAssets((s) => s.status);
+  const groups = useAssets((s) => s.groups);
   const assets = useAssets((s) => s.assets);
-  const catalog = useAssets((s) => s.catalog);
-  const [cat, setCat] = useState<AssetCategory | "all">("all");
+  const locked = useAssets((s) => s.locked);
+  const categories = useAssets((s) => s.categories);
+  const [cat, setCat] = useState<string>("all");
   const [q, setQ] = useState("");
+  const [collapsed, toggle] = useCollapsed();
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
+  const needle = q.trim().toLowerCase();
+  const filtering = !!needle || cat !== "all";
 
-  const filtered = useMemo(
+  // Listed assets / locked catalog entries bucketed by group once per library load.
+  const byGroup = useMemo(() => {
+    const m = new Map<string, { items: AssetDef[]; locked: CatalogItem[] }>();
+    const slot = (g: string) => m.get(g) ?? (m.set(g, { items: [], locked: [] }), m.get(g)!);
+    for (const a of assets) if (!a.hidden) slot(a.group).items.push(a);
+    for (const c of locked) if (c.kind === "asset") slot(c.group).locked.push(c);
+    return m;
+  }, [assets, locked]);
+
+  // Only categories that have something in them.
+  const usedCats = useMemo(() => {
+    const used = new Set<string>();
+    for (const { items, locked: l } of byGroup.values()) {
+      for (const a of items) used.add(a.category);
+      for (const c of l) used.add(c.category);
+    }
+    return categories.filter((c) => used.has(c.id));
+  }, [byGroup, categories]);
+
+  const sections = useMemo(
     () =>
-      assets.filter(
-        (a) =>
-          (cat === "all" || a.category === cat) &&
-          (!q || a.name[lang].toLowerCase().includes(q.toLowerCase()) || a.name.en.toLowerCase().includes(q.toLowerCase())),
-      ),
-    [assets, cat, q, lang],
+      groups
+        .filter((g) => g.assetCount > 0)
+        .map((g) => {
+          const b = byGroup.get(g.id) ?? { items: [], locked: [] };
+          const keep = (x: { category: string; name: I18nText; tags?: string[] }) => (cat === "all" || x.category === cat) && matches(needle, x.name, x.tags);
+          const items = g.locked ? [] : b.items.filter(keep);
+          const lockedItems = g.locked ? b.locked.filter(keep) : [];
+          return { g, items, lockedItems, count: g.locked ? lockedItems.length : items.length };
+        })
+        .filter((x) => !filtering || x.count > 0),
+    [groups, byGroup, cat, needle, filtering],
   );
-  const lockedCount = user ? 0 : catalog.length;
 
   const add = (a: AssetDef) => {
     const s = useEditor.getState();
@@ -110,63 +244,76 @@ function Library() {
         className="w-full rounded-md bg-slate-800 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700 outline-none focus:ring-amber-500"
       />
       <div className="flex flex-wrap gap-1">
-        {(["all", ...ASSET_CATEGORIES] as const).map((c) => (
+        {[{ id: "all", name: null as I18nText | null }, ...usedCats].map((c) => (
           <button
-            key={c}
-            onClick={() => setCat(c)}
+            key={c.id}
+            onClick={() => setCat(c.id)}
             className={cx(
               "rounded-full px-2.5 py-1 text-xs",
-              cat === c ? "bg-amber-500 font-semibold text-slate-950" : "bg-slate-800 text-slate-300 hover:bg-slate-700",
+              cat === c.id ? "bg-amber-500 font-semibold text-slate-950" : "bg-slate-800 text-slate-300 hover:bg-slate-700",
             )}
           >
-            {c === "all" ? t("editor.library.all") : t(`editor.library.categories.${c}` as TKey)}
+            {c.name ? c.name[lang] : t("editor.library.all")}
           </button>
         ))}
       </div>
       <p className="text-xs text-slate-500">{t("editor.library.hint")}</p>
-      <div className="grid grid-cols-3 gap-2">
-        {filtered.map((a) => (
-          <button
-            key={a.id}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData(ASSET_MIME, a.id);
-              e.dataTransfer.effectAllowed = "copy";
-            }}
-            onClick={() => add(a)}
-            title={a.name[lang]}
-            className="group relative flex flex-col items-center gap-1 rounded-lg bg-slate-800 p-1.5 ring-1 ring-slate-700 hover:ring-amber-500"
-          >
-            <div className="flex h-16 w-full items-center justify-center overflow-hidden rounded bg-[#e8dcc0] p-1">
-              <AssetThumb asset={a} />
-            </div>
-            <span className="line-clamp-1 w-full text-center text-[10px] text-slate-300">{a.name[lang]}</span>
-            {a.premium && (
-              <span className="absolute right-1 top-1 rounded bg-amber-500 px-1 text-[9px] font-bold text-slate-950">★</span>
-            )}
-          </button>
-        ))}
-      </div>
-      {!filtered.length && <p className="text-sm text-slate-500">{t("editor.library.noResults")}</p>}
-      {lockedCount > 0 && (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
-          <div className="mb-2 flex items-center gap-2 font-semibold">
-            <Icon name="lock" size={16} /> {t("editor.library.premium")}
-          </div>
-          <p className="mb-2 text-xs">{t("editor.library.locked", { n: lockedCount })}</p>
-          <div className="mb-3 flex flex-wrap gap-1">
-            {catalog.slice(0, 12).map((c) => (
-              <span key={c.id} className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
-                🔒 {c.name[lang]}
-              </span>
-            ))}
-            {catalog.length > 12 && <span className="text-[10px] text-slate-400">+{catalog.length - 12}</span>}
-          </div>
-          <Link href="/login" className="inline-block rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-slate-950">
-            {t("editor.library.lockedCta")}
-          </Link>
-        </div>
+      {status !== "ready" ? (
+        <LibraryStatus />
+      ) : (
+        sections.map(({ g, items, lockedItems, count }) => {
+          const open = filtering || !collapsed[`a:${g.id}`];
+          const shown = showAll[g.id] ? items : items.slice(0, GROUP_PAGE);
+          return (
+            <section key={g.id} data-testid={`asset-group-${g.id}`}>
+              <GroupHeader group={g} open={open} count={count} onToggle={() => toggle(`a:${g.id}`)} />
+              {open && (
+                <div className="mt-1.5">
+                  {g.locked ? (
+                    <LockedGroup items={lockedItems} count={count} />
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-3 gap-2">
+                        {shown.map((a) => (
+                          <button
+                            key={a.id}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData(ASSET_MIME, a.id);
+                              e.dataTransfer.effectAllowed = "copy";
+                            }}
+                            onClick={() => add(a)}
+                            title={a.name[lang]}
+                            data-asset-id={a.id}
+                            className="group relative flex flex-col items-center gap-1 rounded-lg bg-slate-800 p-1.5 ring-1 ring-slate-700 hover:ring-amber-500"
+                          >
+                            <div className="flex h-16 w-full items-center justify-center overflow-hidden rounded bg-[#e8dcc0] p-1">
+                              <AssetThumb asset={a} />
+                            </div>
+                            <span className="line-clamp-1 w-full text-center text-[10px] text-slate-300">{a.name[lang]}</span>
+                            {a.premium && (
+                              <span className="absolute right-1 top-1 rounded bg-amber-500 px-1 text-[9px] font-bold text-slate-950">★</span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      {items.length > shown.length && (
+                        <button
+                          onClick={() => setShowAll((s) => ({ ...s, [g.id]: true }))}
+                          className="mt-2 w-full rounded-md bg-slate-800 py-1.5 text-xs text-slate-300 hover:bg-slate-700"
+                        >
+                          {t("editor.library.showAll", { n: items.length })}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
+          );
+        })
       )}
+      {status === "ready" && !sections.length && <p className="text-sm text-slate-500">{t("editor.library.noResults")}</p>}
     </div>
   );
 }
@@ -211,18 +358,20 @@ function Uploads() {
 
 function Background() {
   const { t, lang } = useI18n();
-  const { user } = useSession();
   const doc = useEditor((s) => s.doc);
   const setDoc = useEditor((s) => s.setDoc);
   const beginGesture = useEditor((s) => s.beginGesture);
   const endGesture = useEditor((s) => s.endGesture);
+  const status = useAssets((s) => s.status);
+  const groups = useAssets((s) => s.groups);
   const patterns = useAssets((s) => s.patterns);
-  const catalog = useAssets((s) => s.catalog);
+  const locked = useAssets((s) => s.locked);
+  const [collapsed, toggle] = useCollapsed();
   if (!doc) return null;
   const bg = doc.background;
   const setBg = (patch: Partial<typeof bg>, history = true) =>
     setDoc((d) => ({ ...d, background: { ...d.background, ...patch } }), { history });
-  const lockedPatterns = user ? [] : catalog.filter((c) => c.kind === "pattern");
+  const textureGroups = groups.filter((g) => g.patternCount > 0);
 
   return (
     <div className="space-y-4">
@@ -235,48 +384,63 @@ function Background() {
           ))}
         </div>
       </div>
-      <div>
+      <div className="space-y-2">
         <Label>{t("editor.bg.pattern")}</Label>
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            onClick={() => setBg({ pattern: null })}
-            className={cx(
-              "flex aspect-square items-center justify-center rounded-lg bg-slate-800 text-xs text-slate-300 ring-2",
-              !bg.pattern ? "ring-amber-500" : "ring-transparent hover:ring-slate-600",
-            )}
-          >
-            {t("editor.bg.none")}
-          </button>
-          {patterns.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setBg({ pattern: p.id })}
-              title={p.name[lang]}
-              className={cx("relative overflow-hidden rounded-lg ring-2", bg.pattern === p.id ? "ring-amber-500" : "ring-transparent hover:ring-slate-600")}
-            >
-              <svg viewBox={`0 0 ${p.size * 2} ${p.size * 2}`} className="aspect-square w-full">
-                <defs>
-                  <pattern id={`thumb-${p.id}`} width={p.size} height={p.size} patternUnits="userSpaceOnUse">
-                    <g dangerouslySetInnerHTML={{ __html: p.body }} />
-                  </pattern>
-                </defs>
-                <rect width={p.size * 2} height={p.size * 2} fill={`url(#thumb-${p.id})`} />
-              </svg>
-              <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] text-white">{p.name[lang]}</span>
-            </button>
-          ))}
-          {lockedPatterns.map((p) => (
-            <Link
-              key={p.id}
-              href="/login"
-              title={t("editor.library.lockedCta")}
-              className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg bg-slate-800/60 text-center text-[10px] text-slate-500 ring-1 ring-slate-700"
-            >
-              <Icon name="lock" size={16} />
-              {p.name[lang]}
-            </Link>
-          ))}
-        </div>
+        <button
+          onClick={() => setBg({ pattern: null })}
+          className={cx(
+            "w-full rounded-lg bg-slate-800 py-2 text-xs text-slate-300 ring-2",
+            !bg.pattern ? "ring-amber-500" : "ring-transparent hover:ring-slate-600",
+          )}
+        >
+          {t("editor.bg.none")}
+        </button>
+        {status !== "ready" && <LibraryStatus />}
+        {textureGroups.map((g) => {
+          const open = !collapsed[`p:${g.id}`];
+          const items = g.locked
+            ? locked.filter((c) => c.group === g.id && c.kind === "pattern")
+            : patterns.filter((p) => p.group === g.id && !p.hidden);
+          return (
+            <section key={g.id} data-testid={`texture-group-${g.id}`}>
+              <GroupHeader group={g} open={open} count={items.length} onToggle={() => toggle(`p:${g.id}`)} />
+              {open && (
+                <div className="mt-1.5 grid grid-cols-3 gap-2">
+                  {g.locked
+                    ? items.map((p) => (
+                        <Link
+                          key={p.id}
+                          href="/login"
+                          title={t("editor.library.lockedCta")}
+                          className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg bg-slate-800/60 text-center text-[10px] text-slate-500 ring-1 ring-slate-700"
+                        >
+                          <Icon name="lock" size={16} />
+                          {p.name[lang]}
+                        </Link>
+                      ))
+                    : (items as PatternDef[]).map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => setBg({ pattern: p.id })}
+                          title={p.name[lang]}
+                          className={cx("relative overflow-hidden rounded-lg ring-2", bg.pattern === p.id ? "ring-amber-500" : "ring-transparent hover:ring-slate-600")}
+                        >
+                          <svg viewBox={`0 0 ${p.size * 2} ${p.size * 2}`} className="aspect-square w-full">
+                            <defs>
+                              <pattern id={`thumb-${p.id}`} width={p.size} height={p.size} patternUnits="userSpaceOnUse">
+                                <g dangerouslySetInnerHTML={{ __html: p.body }} />
+                              </pattern>
+                            </defs>
+                            <rect width={p.size * 2} height={p.size * 2} fill={`url(#thumb-${p.id})`} />
+                          </svg>
+                          <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[10px] text-white">{p.name[lang]}</span>
+                        </button>
+                      ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
       </div>
       {bg.pattern && (
         <div>
