@@ -7,7 +7,7 @@ import { useSession } from "@/lib/client/session";
 import { createMap, LimitError } from "@/lib/client/repo";
 import { toast } from "@/lib/client/toasts";
 import { createMapContent } from "@/lib/mapContent";
-import { DEFAULT_GRID_SIZE, GRID_PRESETS, LIMITS, PAGE_PRESETS } from "@/lib/limits";
+import { DEFAULT_GRID_SIZE, GRID_PRESETS, LIMITS, maxCells, PAGE_PRESETS, pageFromCells } from "@/lib/limits";
 import type { GridStyle } from "@/lib/types";
 import { Button, ColorField, cx, Label, Modal, NumberField, Segmented } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/Icon";
@@ -20,8 +20,11 @@ export default function NewMapWizard({ open, onClose }: { open: boolean; onClose
   const { user } = useSession();
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [w, setW] = useState(1400);
-  const [h, setH] = useState(1050);
+  const [sizeMode, setSizeMode] = useState<"px" | "cells">("px");
+  const [pxW, setW] = useState(1400);
+  const [pxH, setH] = useState(1050);
+  const [cols, setCols] = useState(20);
+  const [rows, setRows] = useState(15);
   const [useGrid, setUseGrid] = useState(true);
   const [size, setSize] = useState(DEFAULT_GRID_SIZE);
   const [style, setStyle] = useState<GridStyle>("lines");
@@ -31,6 +34,24 @@ export default function NewMapWizard({ open, onClose }: { open: boolean; onClose
   const [busy, setBusy] = useState(false);
 
   const clamp = (n: number) => Math.round(Math.min(LIMITS.map.maxSize, Math.max(LIMITS.map.minSize, n)));
+
+  // In "cells" mode the page size is derived from columns × rows × cell size.
+  const fromCells = pageFromCells(cols, rows, size);
+  const w = sizeMode === "cells" ? fromCells.w : pxW;
+  const h = sizeMode === "cells" ? fromCells.h : pxH;
+
+  const changeSizeMode = (m: "px" | "cells") => {
+    if (m === sizeMode) return;
+    if (m === "cells") {
+      setCols(Math.max(1, Math.round(pxW / size)));
+      setRows(Math.max(1, Math.round(pxH / size)));
+      setUseGrid(true);
+    } else {
+      setW(fromCells.w);
+      setH(fromCells.h);
+    }
+    setSizeMode(m);
+  };
 
   const preview = useMemo(
     () =>
@@ -46,6 +67,7 @@ export default function NewMapWizard({ open, onClose }: { open: boolean; onClose
 
   const close = () => {
     setStep(1);
+    setSizeMode("px");
     onClose();
   };
 
@@ -85,6 +107,58 @@ export default function NewMapWizard({ open, onClose }: { open: boolean; onClose
         <div>
           {step === 1 && (
             <div className="space-y-4">
+              <div>
+                <Label>{t("wizard.sizeBy")}</Label>
+                <Segmented
+                  value={sizeMode}
+                  onChange={changeSizeMode}
+                  options={[
+                    { value: "px", label: t("wizard.sizeByPx") },
+                    { value: "cells", label: t("wizard.sizeByCells") },
+                  ]}
+                />
+              </div>
+              {sizeMode === "cells" ? (
+                <>
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1">
+                      <Label>{t("wizard.columns")}</Label>
+                      <NumberField value={cols} min={1} max={maxCells(size)} onChange={(v) => setCols(Math.round(v))} />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      title={t("wizard.swap")}
+                      onClick={() => {
+                        setCols(rows);
+                        setRows(cols);
+                      }}
+                    >
+                      ⇄
+                    </Button>
+                    <div className="flex-1">
+                      <Label>{t("wizard.rows")}</Label>
+                      <NumberField value={rows} min={1} max={maxCells(size)} onChange={(v) => setRows(Math.round(v))} />
+                    </div>
+                  </div>
+                  <div>
+                    <Label>{t("wizard.gridSize")}</Label>
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {GRID_PRESETS.map((g) => (
+                        <Button key={g.size} className={cx("px-2 py-1 text-xs", size === g.size && "ring-2 ring-amber-500")} onClick={() => setSize(g.size)}>
+                          {g.label}
+                        </Button>
+                      ))}
+                    </div>
+                    <NumberField value={size} suffix="px" min={8} max={1000} onChange={setSize} className="w-40" />
+                  </div>
+                  <p className="text-sm text-amber-200">{t("wizard.cellsResult", { w, h })}</p>
+                  {fromCells.clamped && (
+                    <p className="text-xs text-red-300">{t("wizard.cellsClamped", { min: LIMITS.map.minSize, max: LIMITS.map.maxSize })}</p>
+                  )}
+                  <p className="text-xs text-slate-400">{t("wizard.cellsHint")}</p>
+                </>
+              ) : (
+                <>
               <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <Label>{t("wizard.width")}</Label>
@@ -129,6 +203,8 @@ export default function NewMapWizard({ open, onClose }: { open: boolean; onClose
                 </div>
               </div>
               <p className="text-xs text-slate-400">{t("wizard.sizeHint")}</p>
+                </>
+              )}
             </div>
           )}
 

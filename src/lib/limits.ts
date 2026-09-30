@@ -51,3 +51,20 @@ export const PAGE_PRESETS = [
 
 /** Feet represented by one grid cell (D&D 5e standard). */
 export const FEET_PER_CELL = 5;
+
+/**
+ * Page size for a grid of `cols` × `rows` cells of `cell` px each.
+ * `clamped` is true when the result had to be limited to the allowed page size,
+ * i.e. the grid would no longer fill the page exactly.
+ */
+export function pageFromCells(cols: number, rows: number, cell: number) {
+  const lim = (n: number) => Math.min(LIMITS.map.maxSize, Math.max(LIMITS.map.minSize, n));
+  const rawW = Math.round(Math.max(1, Math.round(cols)) * cell);
+  const rawH = Math.round(Math.max(1, Math.round(rows)) * cell);
+  const w = lim(rawW);
+  const h = lim(rawH);
+  return { w, h, clamped: w !== rawW || h !== rawH };
+}
+
+/** Largest whole number of cells of `cell` px that fits on one side of a page. */
+export const maxCells = (cell: number) => Math.max(1, Math.floor(LIMITS.map.maxSize / Math.max(1, cell)));
