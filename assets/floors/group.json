@@ -1,0 +1,14 @@
+{
+  "name": {"en": "Floors", "pl": "Podłogi"},
+  "description": {"en": "Stone, cave, earth and wooden floors", "pl": "Podłogi kamienne, jaskiniowe, ziemne i drewniane"},
+  "access": "free",
+  "order": 15,
+  "patterns": {
+    "f-flagstone": {"name": {"en": "Flagstone floor", "pl": "Posadzka z płyt"}},
+    "f-stone-bricks": {"name": {"en": "Stone blocks", "pl": "Kamienne bloki"}},
+    "f-cave-floor": {"name": {"en": "Cave floor", "pl": "Dno jaskini"}},
+    "f-dirt": {"name": {"en": "Dirt floor", "pl": "Klepisko"}},
+    "f-gravel": {"name": {"en": "Gravel", "pl": "Żwir"}},
+    "f-old-planks": {"name": {"en": "Old planks", "pl": "Stare deski"}}
+  }
+}

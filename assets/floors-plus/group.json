@@ -1,0 +1,21 @@
+{
+  "name": {"en": "Floors+", "pl": "Podłogi+"},
+  "description": {"en": "Detailed dungeon, temple, cave and outdoor floors", "pl": "Szczegółowe podłogi lochów, świątyń, jaskiń i terenu"},
+  "access": "user",
+  "order": 25,
+  "patterns": {
+    "f-herringbone": {"name": {"en": "Herringbone bricks", "pl": "Cegła w jodełkę"}},
+    "f-marble": {"name": {"en": "Marble checker", "pl": "Marmurowa szachownica"}},
+    "f-hex-tiles": {"name": {"en": "Hexagonal tiles", "pl": "Płytki heksagonalne"}},
+    "f-mosaic": {"name": {"en": "Temple mosaic", "pl": "Mozaika świątynna"}},
+    "f-ruined-stone": {"name": {"en": "Ruined flagstones", "pl": "Zrujnowana posadzka"}},
+    "f-sewer-slabs": {"name": {"en": "Sewer slabs", "pl": "Płyty kanałów"}},
+    "f-mossy-cave": {"name": {"en": "Mossy cave", "pl": "Omszała jaskinia"}},
+    "f-crystal-cave": {"name": {"en": "Crystal cave", "pl": "Kryształowa jaskinia"}},
+    "f-cracked-earth": {"name": {"en": "Cracked earth", "pl": "Spękana ziemia"}},
+    "f-swamp-mud": {"name": {"en": "Swamp mud", "pl": "Bagienne błoto"}},
+    "f-forest-floor": {"name": {"en": "Forest floor", "pl": "Leśne runo"}},
+    "f-parquet": {"name": {"en": "Parquet", "pl": "Parkiet"}},
+    "f-ice": {"name": {"en": "Ice", "pl": "Lód"}}
+  }
+}
