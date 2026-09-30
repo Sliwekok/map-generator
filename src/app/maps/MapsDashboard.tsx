@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/client/session";
 import { useAssets } from "@/lib/client/assets";
-import { useUploads, dataUrlToFile, uploadOne } from "@/lib/client/uploads";
+import { dataUrlToFile, uploadOne } from "@/lib/client/uploads";
 import { localDb } from "@/lib/client/localDb";
 import { ApiError } from "@/lib/client/api";
 import { contentOf, createMap, deleteMap, LimitError, listCloudMaps, listLocalMaps, renameMap } from "@/lib/client/repo";
@@ -84,7 +84,6 @@ export default function MapsDashboard({ openWizard = false }: { openWizard?: boo
 
   useEffect(() => {
     void useAssets.getState().loadPremium(user);
-    void useUploads.getState().load(user);
   }, [user]);
 
   useEffect(() => {

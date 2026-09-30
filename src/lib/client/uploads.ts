@@ -1,9 +1,13 @@
 // "My files": uploaded images and folders of logged-in users (GridFS + folders via the API).
+// Loaded lazily, one folder at a time: a folder's listing is fetched the first time it is opened,
+// then kept in memory so re-entering it is instant (stale entries are shown at once and refreshed
+// in the background). Images themselves are only downloaded by <img loading="lazy"> when shown.
 // Guests can't upload. The browser-side checks here only give quick feedback - the server re-validates everything.
 "use client";
 
+import { useMemo } from "react";
 import { create } from "zustand";
-import type { FolderInfo, SessionUser, SkippedEntry, StorageUsage, UploadInfo, UploadResult } from "@/lib/types";
+import type { FileSearchResult, FolderInfo, FolderListing, SessionUser, SkippedEntry, StorageUsage, UploadInfo, UploadResult } from "@/lib/types";
 import { LIMITS } from "@/lib/limits";
 import { fileKind } from "@/lib/fileNames";
 import { api, ApiError } from "./api";
@@ -25,15 +29,37 @@ export interface UploadReport {
   failed: { name: string; code: string; data: Record<string, unknown> }[];
 }
 
-interface FilesState {
+export interface FolderEntry {
+  folder: FolderInfo | null;
   folders: FolderInfo[];
   files: UploadInfo[];
-  byId: Record<string, UploadInfo>;
-  usage: StorageUsage;
-  loaded: boolean;
-  /** Owner the data was loaded for - avoids showing one account's files to the next. */
+  /** Shown as is, but refreshed from the server the next time the folder is opened. */
+  stale: boolean;
+}
+
+/** Cache key of a folder: its id, or "root". */
+export const folderKey = (id: string | null) => id ?? "root";
+
+interface FilesState {
+  /** Owner the cache belongs to - switching accounts clears it. */
   ownerId: string | null;
-  load: (user: SessionUser | null) => Promise<void>;
+  entries: Record<string, FolderEntry>;
+  loading: Record<string, boolean>;
+  errors: Record<string, string>;
+  /** Every folder seen so far (listings, paths, search) - used for breadcrumbs and paths. */
+  known: Record<string, FolderInfo>;
+  /** Every file seen so far - used by the editor canvas, layers list and export. */
+  byId: Record<string, UploadInfo>;
+  /** Files referenced by maps that don't exist (any more) - rendered as placeholders. */
+  missing: Record<string, true>;
+  usage: StorageUsage | null;
+
+  reset: (user: SessionUser | null) => void;
+  /** Loads one folder's contents (cached; `force` refetches). Resolves to null on error. */
+  openFolder: (id: string | null, force?: boolean) => Promise<FolderEntry | null>;
+  search: (q: string) => Promise<FileSearchResult>;
+  /** Fetches metadata of the given files if not known yet (e.g. images used by a map). */
+  ensureInfos: (ids: string[]) => Promise<void>;
   /** Uploads images and/or archives into `folderId`, one request per file. */
   uploadMany: (user: SessionUser | null, files: File[], folderId: string | null, onProgress?: (done: number, total: number) => void) => Promise<UploadReport>;
   createFolder: (name: string, parentId: string | null) => Promise<FolderInfo>;
@@ -42,8 +68,6 @@ interface FilesState {
   move: (fileIds: string[], folderIds: string[], targetId: string | null) => Promise<{ moved: number; renamed: { id: string; from: string; to: string }[] }>;
   removeMany: (fileIds: string[], folderIds: string[]) => Promise<void>;
 }
-
-const EMPTY_USAGE: StorageUsage = { files: 0, bytes: 0, folders: 0 };
 
 let guestCleanupDone = false;
 /** Guest uploads used to live in IndexedDB; that storage is gone - free the space once. */
@@ -57,13 +81,7 @@ function dropLegacyGuestUploads() {
   }
 }
 
-function indexFiles(files: UploadInfo[]) {
-  const byId: Record<string, UploadInfo> = {};
-  for (const u of files) byId[u.id] = u;
-  return byId;
-}
-
-type TreeResponse = { folders: FolderInfo[]; uploads: UploadInfo[]; usage: StorageUsage };
+const HEX_ID = /^[a-f0-9]{24}$/i;
 
 /** Quick client-side check before sending; returns an error code or null. */
 export function precheckUpload(file: File): string | null {
@@ -75,28 +93,108 @@ export function precheckUpload(file: File): string | null {
   return null;
 }
 
+const withFiles = (byId: Record<string, UploadInfo>, files: UploadInfo[]) => {
+  if (!files.length) return byId;
+  const next = { ...byId };
+  for (const f of files) next[f.id] = f;
+  return next;
+};
+const withFolders = (known: Record<string, FolderInfo>, folders: (FolderInfo | null)[]) => {
+  const next = { ...known };
+  for (const f of folders) if (f) next[f.id] = { ...next[f.id], ...f };
+  return next;
+};
+const markAllStale = (entries: Record<string, FolderEntry>) =>
+  Object.fromEntries(Object.entries(entries).map(([k, e]) => [k, { ...e, stale: true }]));
+
+// In-flight folder requests (deduplicated) and a generation counter so responses that arrive
+// after an account switch are dropped.
+const inflight = new Map<string, Promise<FolderEntry | null>>();
+let generation = 0;
+
 export const useUploads = create<FilesState>((set, get) => {
-  const refresh = async () => {
-    const r = await api<TreeResponse>("/api/uploads");
-    set({ folders: r.folders, files: r.uploads, byId: indexFiles(r.uploads), usage: r.usage, loaded: true });
+  const patchEntry = (key: string, fn: (e: FolderEntry) => FolderEntry) => {
+    const e = get().entries[key];
+    if (e) set({ entries: { ...get().entries, [key]: fn(e) } });
   };
 
   return {
-    folders: [],
-    files: [],
-    byId: {},
-    usage: EMPTY_USAGE,
-    loaded: false,
     ownerId: null,
+    entries: {},
+    loading: {},
+    errors: {},
+    known: {},
+    byId: {},
+    missing: {},
+    usage: null,
 
-    async load(user) {
+    reset(user) {
       dropLegacyGuestUploads();
-      if (!user) {
-        set({ folders: [], files: [], byId: {}, usage: EMPTY_USAGE, loaded: true, ownerId: null });
-        return;
+      const owner = user?.id ?? null;
+      if (owner === get().ownerId) return;
+      generation++;
+      inflight.clear();
+      set({ ownerId: owner, entries: {}, loading: {}, errors: {}, known: {}, byId: {}, missing: {}, usage: null });
+    },
+
+    openFolder(id, force = false) {
+      const key = folderKey(id);
+      const cached = get().entries[key];
+      if (!get().ownerId) return Promise.resolve(null);
+      if (cached && !cached.stale && !force) return Promise.resolve(cached);
+      const running = inflight.get(key);
+      if (running) return running;
+      const gen = generation;
+      set({ loading: { ...get().loading, [key]: true } });
+      const p = api<FolderListing>(`/api/uploads?folder=${encodeURIComponent(key)}`)
+        .then((r) => {
+          if (gen !== generation) return null;
+          const entry: FolderEntry = { folder: r.folder, folders: r.folders, files: r.uploads, stale: false };
+          const { [key]: _err, ...errors } = get().errors;
+          void _err;
+          set({
+            entries: { ...get().entries, [key]: entry },
+            errors,
+            known: withFolders(get().known, [...r.path, r.folder, ...r.folders]),
+            byId: withFiles(get().byId, r.uploads),
+            usage: r.usage,
+          });
+          return entry;
+        })
+        .catch((e) => {
+          if (gen !== generation) return null;
+          set({ errors: { ...get().errors, [key]: e instanceof ApiError ? e.code : "failed" } });
+          return null;
+        })
+        .finally(() => {
+          inflight.delete(key);
+          if (gen === generation) {
+            const { [key]: _l, ...loading } = get().loading;
+            void _l;
+            set({ loading });
+          }
+        });
+      inflight.set(key, p);
+      return p;
+    },
+
+    async search(q) {
+      const r = await api<FileSearchResult>(`/api/uploads?q=${encodeURIComponent(q.slice(0, 100))}`);
+      set({ known: withFolders(get().known, [...r.known, ...r.folders]), byId: withFiles(get().byId, r.uploads) });
+      return r;
+    },
+
+    async ensureInfos(ids) {
+      const need = [...new Set(ids)].filter((id) => HEX_ID.test(id) && !get().byId[id] && !get().missing[id]).slice(0, LIMITS.files.maxBatchItems);
+      if (!need.length || !get().ownerId) return;
+      try {
+        const r = await api<{ uploads: UploadInfo[]; missing: string[] }>("/api/uploads/lookup", { method: "POST", json: { ids: need } });
+        const missing = { ...get().missing };
+        for (const id of r.missing) missing[id] = true;
+        set({ byId: withFiles(get().byId, r.uploads), missing });
+      } catch {
+        /* images still render from their URL */
       }
-      if (get().ownerId !== user.id) set({ folders: [], files: [], byId: {}, usage: EMPTY_USAGE, loaded: false, ownerId: user.id });
-      await refresh().catch(() => set({ loaded: true }));
     },
 
     async uploadMany(user, files, folderId, onProgress) {
@@ -105,6 +203,7 @@ export const useUploads = create<FilesState>((set, get) => {
         for (const f of files) report.failed.push({ name: f.name, code: "login_required", data: {} });
         return report;
       }
+      const key = folderKey(folderId);
       let done = 0;
       for (const file of files) {
         const pre = precheckUpload(file);
@@ -119,15 +218,21 @@ export const useUploads = create<FilesState>((set, get) => {
             report.uploaded.push(...r.uploads);
             report.folders.push(...r.folders);
             report.skipped.push(...r.skipped.map((s) => (fileKind(file.name) === "archive" ? { ...s, path: `${file.name}/${s.path}` } : s)));
-            const all = [...r.uploads, ...get().files];
+            // Parent counts, merged subfolders etc. changed: everything cached is refreshed on next visit,
+            // but the target folder is patched right away so the new items appear instantly.
+            const direct = r.uploads.filter((u) => (u.folderId ?? null) === folderId);
+            const directFolders = r.folders.filter((f) => (f.parentId ?? null) === folderId).map((f) => ({ ...f, itemCount: undefined }));
+            const entries = markAllStale(get().entries);
+            if (entries[key]) entries[key] = { ...entries[key], files: [...direct, ...entries[key].files], folders: [...entries[key].folders, ...directFolders] };
+            const usage = get().usage;
             set({
-              files: all,
-              byId: indexFiles(all),
-              folders: [...get().folders, ...r.folders],
-              usage: {
-                files: get().usage.files + r.uploads.length,
-                bytes: get().usage.bytes + r.uploads.reduce((s, u) => s + u.size, 0),
-                folders: get().usage.folders + r.folders.length,
+              entries,
+              known: withFolders(get().known, r.folders),
+              byId: withFiles(get().byId, r.uploads),
+              usage: usage && {
+                files: usage.files + r.uploads.length,
+                bytes: usage.bytes + r.uploads.reduce((sum, u) => sum + u.size, 0),
+                folders: usage.folders + r.folders.length,
               },
             });
           } catch (e) {
@@ -152,41 +257,84 @@ export const useUploads = create<FilesState>((set, get) => {
 
     async createFolder(name, parentId) {
       const r = await api<{ folder: FolderInfo }>("/api/folders", { method: "POST", json: { name, parentId } });
-      set({ folders: [...get().folders, r.folder], usage: { ...get().usage, folders: get().usage.folders + 1 } });
-      return r.folder;
+      const folder = { ...r.folder, itemCount: 0 };
+      const key = folderKey(parentId);
+      // The grandparent's item count changed; the new folder is known to be empty (instant to open).
+      const entries = markAllStale(get().entries);
+      if (entries[key]) entries[key] = { ...entries[key], folders: [...entries[key].folders, folder], stale: !!get().entries[key]?.stale };
+      entries[folder.id] = { folder, folders: [], files: [], stale: false };
+      const usage = get().usage;
+      set({ entries, known: withFolders(get().known, [folder]), usage: usage && { ...usage, folders: usage.folders + 1 } });
+      return folder;
     },
 
     async renameFolder(id, name) {
       const r = await api<{ folder: FolderInfo }>(`/api/folders/${id}`, { method: "PATCH", json: { name } });
-      set({ folders: get().folders.map((f) => (f.id === id ? r.folder : f)) });
+      const prev = get().known[id];
+      const folder = { ...prev, ...r.folder };
+      patchEntry(folderKey(folder.parentId), (e) => ({ ...e, folders: e.folders.map((f) => (f.id === id ? { ...f, name: folder.name } : f)) }));
+      patchEntry(id, (e) => ({ ...e, folder }));
+      set({ known: withFolders(get().known, [folder]) });
     },
 
     async renameFile(id, name) {
       const r = await api<{ upload: UploadInfo }>(`/api/uploads/${id}`, { method: "PATCH", json: { name } });
-      const files = get().files.map((f) => (f.id === id ? r.upload : f));
-      set({ files, byId: indexFiles(files) });
+      patchEntry(folderKey(r.upload.folderId), (e) => ({ ...e, files: e.files.map((f) => (f.id === id ? r.upload : f)) }));
+      set({ byId: withFiles(get().byId, [r.upload]) });
     },
 
     async move(fileIds, folderIds, targetId) {
-      try {
-        return await api<{ moved: number; renamed: { id: string; from: string; to: string }[] }>("/api/uploads/move", {
-          method: "POST",
-          json: { fileIds, folderIds, targetId },
-        });
-      } finally {
-        await refresh().catch(() => undefined);
+      const r = await api<{ moved: number; renamed: { id: string; from: string; to: string }[] }>("/api/uploads/move", {
+        method: "POST",
+        json: { fileIds, folderIds, targetId },
+      });
+      // Moved items leave their folders at once; every cached folder is refreshed on its next visit.
+      const gone = new Set([...fileIds, ...folderIds]);
+      const entries = markAllStale(get().entries);
+      for (const [k, e] of Object.entries(entries)) {
+        entries[k] = { ...e, files: e.files.filter((f) => !gone.has(f.id)), folders: e.folders.filter((f) => !gone.has(f.id)) };
       }
+      const known = { ...get().known };
+      for (const id of folderIds) if (known[id]) known[id] = { ...known[id], parentId: targetId };
+      const byId = { ...get().byId };
+      for (const id of fileIds) if (byId[id]) byId[id] = { ...byId[id], folderId: targetId };
+      set({ entries, known, byId });
+      return r;
     },
 
     async removeMany(fileIds, folderIds) {
-      try {
-        await api("/api/uploads/delete", { method: "POST", json: { fileIds, folderIds } });
-      } finally {
-        await refresh().catch(() => undefined);
+      await api("/api/uploads/delete", { method: "POST", json: { fileIds, folderIds } });
+      const gone = new Set([...fileIds, ...folderIds]);
+      const entries = markAllStale(get().entries);
+      for (const [k, e] of Object.entries(entries)) {
+        entries[k] = { ...e, files: e.files.filter((f) => !gone.has(f.id)), folders: e.folders.filter((f) => !gone.has(f.id)) };
       }
+      // Cached contents of deleted folders are dropped (their subfolders 404 on the next visit and fall back).
+      for (const id of folderIds) delete entries[id];
+      const byId = { ...get().byId };
+      const missing = { ...get().missing };
+      for (const id of fileIds) {
+        delete byId[id];
+        missing[id] = true;
+      }
+      set({ entries, byId, missing });
     },
   };
 });
+
+/**
+ * Upload lookup for the map renderer: known files, `null` for files known to be missing.
+ * Files not looked up yet are rendered straight from their URL (see MapRenderer).
+ */
+export function useUploadMap(): Record<string, { url: string } | null> {
+  const byId = useUploads((s) => s.byId);
+  const missing = useUploads((s) => s.missing);
+  return useMemo(() => {
+    const m: Record<string, { url: string } | null> = { ...byId };
+    for (const id of Object.keys(missing)) m[id] = null;
+    return m;
+  }, [byId, missing]);
+}
 
 /** Upload of a single image without the report (used by JSON project import). */
 export async function uploadOne(user: SessionUser | null, file: File, folderId: string | null): Promise<UploadInfo> {

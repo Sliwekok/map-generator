@@ -17,12 +17,12 @@ function usedUploadIds(doc: MapContent): string[] {
   return [...ids];
 }
 
-async function inlineUploads(doc: MapContent): Promise<Record<string, { url: string }>> {
-  const out: Record<string, { url: string }> = {};
+async function inlineUploads(doc: MapContent): Promise<Record<string, { url: string } | null>> {
+  const out: Record<string, { url: string } | null> = {};
   await Promise.all(
     usedUploadIds(doc).map(async (id) => {
-      const url = await uploadAsDataUrl(id);
-      if (url) out[id] = { url };
+      // Exports are self-contained: images that can't be embedded become placeholders.
+      out[id] = await uploadAsDataUrl(id).then((url) => (url ? { url } : null));
     }),
   );
   return out;
@@ -92,7 +92,7 @@ export interface ProjectFile {
 export async function buildProject(doc: MapContent, names: Record<string, string>): Promise<ProjectFile> {
   const uploads: ProjectFile["uploads"] = {};
   const inl = await inlineUploads(doc);
-  for (const [id, v] of Object.entries(inl)) uploads[id] = { name: names[id] ?? `${id}.img`, dataUrl: v.url };
+  for (const [id, v] of Object.entries(inl)) if (v) uploads[id] = { name: names[id] ?? `${id}.img`, dataUrl: v.url };
   return { format: "mapforge", version: 1, exportedAt: new Date().toISOString(), map: doc, uploads };
 }
 

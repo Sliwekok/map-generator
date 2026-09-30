@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n";
 import { ApiError } from "@/lib/client/api";
 import { fileErrorMessage, nameErrorMessage } from "@/lib/client/fileMessages";
 import { splitExt, validateName } from "@/lib/fileNames";
 import { LIMITS } from "@/lib/limits";
-import type { FolderInfo } from "@/lib/types";
+import { folderKey, useUploads } from "@/lib/client/uploads";
 import { Button, cx, Modal } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/Icon";
 
@@ -98,16 +98,18 @@ export function NameDialog({
   );
 }
 
-/** Folder tree picker. Folders being moved (and everything below them) can't be chosen. */
+/**
+ * Folder tree picker, loaded lazily: the root is listed first and a folder's subfolders are
+ * fetched when it is expanded (cached folders expand instantly). Folders being moved can't be
+ * chosen and aren't expandable, so nothing below them can be picked either.
+ */
 export function MoveDialog({
-  folders,
   movingFolders,
   count,
   initial,
   onMove,
   onClose,
 }: {
-  folders: FolderInfo[];
   movingFolders: string[];
   count: number;
   initial: string | null;
@@ -115,54 +117,72 @@ export function MoveDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const entries = useUploads((s) => s.entries);
+  const loading = useUploads((s) => s.loading);
   const [target, setTarget] = useState<string | null | undefined>(undefined);
-  const children = useMemo(() => {
-    const m = new Map<string | null, FolderInfo[]>();
-    for (const f of folders) {
-      const k = f.parentId ?? null;
-      if (!m.has(k)) m.set(k, []);
-      m.get(k)!.push(f);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(["root"]));
+  const blocked = useMemo(() => new Set(movingFolders), [movingFolders]);
+
+  useEffect(() => {
+    for (const key of expanded) {
+      const e = useUploads.getState().entries[key];
+      if (!e || e.stale) void useUploads.getState().openFolder(key === "root" ? null : key);
     }
-    for (const list of m.values()) list.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
-    return m;
-  }, [folders]);
-  const blocked = useMemo(() => {
-    const out = new Set(movingFolders);
-    let grew = true;
-    while (grew) {
-      grew = false;
-      for (const f of folders) {
-        if (f.parentId && out.has(f.parentId) && !out.has(f.id)) {
-          out.add(f.id);
-          grew = true;
-        }
-      }
-    }
-    return out;
-  }, [folders, movingFolders]);
+  }, [expanded]);
+
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const node = (id: string | null, name: string, depth: number) => {
+    const key = folderKey(id);
     const disabled = id !== null && blocked.has(id);
-    const kids = children.get(id) ?? [];
+    const isOpen = expanded.has(key) && !disabled;
+    const entry = entries[key];
+    const kids = [...(entry?.folders ?? [])].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+    const leaf = entry && !entry.folders.length;
     return (
-      <li key={id ?? "root"}>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setTarget(id)}
-          data-testid="move-target"
-          className={cx(
-            "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm",
-            target === id ? "bg-amber-500 font-semibold text-slate-950" : "text-slate-200 hover:bg-slate-700",
-            disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
-          )}
-          style={{ paddingLeft: 8 + depth * 16 }}
-        >
-          <Icon name={id ? "folder" : "cloud"} size={15} />
-          <span className="truncate">{name}</span>
-          {id === initial && <span className="ml-auto text-[10px] opacity-60">●</span>}
-        </button>
-        {kids.length > 0 && !disabled && <ul>{kids.map((k) => node(k.id, k.name, depth + 1))}</ul>}
+      <li key={key}>
+        <div className="flex items-center" style={{ paddingLeft: depth * 16 }}>
+          <button
+            type="button"
+            onClick={() => toggle(key)}
+            disabled={disabled || leaf}
+            aria-label={isOpen ? "collapse" : "expand"}
+            className={cx("flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 hover:bg-slate-700", (disabled || leaf) && "invisible")}
+          >
+            <Icon name={isOpen ? "chevronDown" : "chevronRight"} size={14} />
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setTarget(id)}
+            onDoubleClick={() => !disabled && toggle(key)}
+            data-testid="move-target"
+            className={cx(
+              "flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm",
+              target === id ? "bg-amber-500 font-semibold text-slate-950" : "text-slate-200 hover:bg-slate-700",
+              disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
+            )}
+          >
+            <Icon name={id ? "folder" : "cloud"} size={15} />
+            <span className="truncate">{name}</span>
+            {id === initial && <span className="ml-auto text-[10px] opacity-60">●</span>}
+          </button>
+        </div>
+        {isOpen &&
+          (entry ? (
+            kids.length > 0 && <ul>{kids.map((k) => node(k.id, k.name, depth + 1))}</ul>
+          ) : (
+            <div className="space-y-1 py-1" style={{ paddingLeft: (depth + 1) * 16 + 24 }} data-testid="move-tree-loading" aria-busy={!!loading[key]}>
+              <div className="h-4 w-32 animate-pulse rounded bg-slate-700" />
+              <div className="h-4 w-24 animate-pulse rounded bg-slate-700" />
+            </div>
+          ))}
       </li>
     );
   };

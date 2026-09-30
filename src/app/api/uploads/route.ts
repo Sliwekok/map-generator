@@ -1,29 +1,36 @@
 import { getSessionUser } from "@/lib/server/auth";
 import { assertSameOrigin, error, folderIdParam, handler, json, rateLimit } from "@/lib/server/http";
-import { extractArchive, loadTree, toFolderInfo, toUploadInfo, uploadImage, usageOf } from "@/lib/server/files";
+import { extractArchive, listFolder, searchFiles, uploadImage } from "@/lib/server/files";
 import { LIMITS } from "@/lib/limits";
 import { fileKind } from "@/lib/fileNames";
 import { detectArchive } from "@/lib/server/archive";
 
-/** The whole file tree of the user (folders + files + usage). Small enough to send at once. */
-export const GET = handler(async () => {
+/**
+ * Lazy listing - the client asks only for what it shows:
+ *   GET /api/uploads?folder=<id|root>  -> contents of one folder (FolderListing)
+ *   GET /api/uploads?q=<text>          -> search over all names (FileSearchResult)
+ */
+export const GET = handler(async (req: Request) => {
   const user = await getSessionUser();
   if (!user) return error(401, "unauthorized");
-  const tree = await loadTree(user.id);
-  return json({
-    folders: [...tree.folders.values()].map(toFolderInfo),
-    uploads: tree.files.map(toUploadInfo),
-    usage: usageOf(tree),
-    limits: {
-      maxFiles: LIMITS.user.maxUploads,
-      maxBytes: LIMITS.user.maxUploadBytes,
-      maxStorageBytes: LIMITS.user.maxStorageBytes,
-      maxArchiveBytes: LIMITS.files.maxArchiveBytes,
-      maxFolders: LIMITS.files.maxFolders,
-      maxFolderDepth: LIMITS.files.maxFolderDepth,
-    },
-  });
+  const params = new URL(req.url).searchParams;
+  const q = params.get("q");
+  if (q !== null) {
+    if (q.length > 100) return error(400, "query_too_long");
+    return json(await searchFiles(user.id, q));
+  }
+  const listing = await listFolder(user.id, folderIdParam(params.get("folder")));
+  return json({ ...listing, limits: LIMITS_INFO });
 });
+
+const LIMITS_INFO = {
+  maxFiles: LIMITS.user.maxUploads,
+  maxBytes: LIMITS.user.maxUploadBytes,
+  maxStorageBytes: LIMITS.user.maxStorageBytes,
+  maxArchiveBytes: LIMITS.files.maxArchiveBytes,
+  maxFolders: LIMITS.files.maxFolders,
+  maxFolderDepth: LIMITS.files.maxFolderDepth,
+};
 
 // POST multipart/form-data: file (image or .zip/.tar/.tar.gz archive), folderId? (empty = root)
 export const POST = handler(async (req: Request) => {

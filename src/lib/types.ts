@@ -128,6 +128,25 @@ export interface FolderInfo {
   name: string;
   parentId: string | null; // null = root folder
   createdAt: string;
+  /** Number of direct children (folders + files); sent with folder listings. */
+  itemCount?: number;
+}
+
+/** Contents of one folder, as returned by GET /api/uploads?folder=… */
+export interface FolderListing {
+  folder: FolderInfo | null; // null = root
+  path: FolderInfo[]; // ancestors from the top, excluding `folder`
+  folders: FolderInfo[]; // direct subfolders (with itemCount)
+  uploads: UploadInfo[]; // files directly in the folder
+  usage: StorageUsage;
+}
+
+/** Search results; `known` holds every ancestor folder so paths can be shown. */
+export interface FileSearchResult {
+  folders: FolderInfo[];
+  uploads: UploadInfo[];
+  known: FolderInfo[];
+  truncated: boolean;
 }
 
 export interface StorageUsage {

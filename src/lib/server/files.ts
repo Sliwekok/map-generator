@@ -6,7 +6,7 @@ import mongoose from "mongoose";
 import { LIMITS } from "@/lib/limits";
 import { checkImage, type CheckedImage, type ImageCheckError } from "@/lib/uploadCheck";
 import { fileKind, isSystemJunk, nameKey, sanitizeName, splitExt, uniqueName, validateName, withTypeExtension } from "@/lib/fileNames";
-import type { FolderInfo, SkippedEntry, StorageUsage, UploadInfo, UploadResult } from "@/lib/types";
+import type { FileSearchResult, FolderInfo, FolderListing, SkippedEntry, StorageUsage, UploadInfo, UploadResult } from "@/lib/types";
 import { Folder, type FolderDocument } from "./models";
 import { uploadsFiles, type UploadMeta } from "./gridfs";
 import { ArchiveError, EntryError, readArchive } from "./archive";
@@ -158,6 +158,88 @@ function nameOrThrow(raw: unknown): string {
 }
 
 const isDuplicateKey = (e: unknown) => (e as { code?: number })?.code === 11000;
+
+// ---------------------------------------------------------------- reading (lazy, per folder)
+
+const effectiveFolder = (tree: Tree, f: FileDoc) => {
+  const id = f.metadata?.folderId ?? null;
+  return id && tree.folders.has(id) ? id : null;
+};
+
+function itemCounts(tree: Tree): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const f of tree.folders.values()) if (f.parent) m.set(f.parent, (m.get(f.parent) ?? 0) + 1);
+  for (const f of tree.files) {
+    const id = effectiveFolder(tree, f);
+    if (id) m.set(id, (m.get(id) ?? 0) + 1);
+  }
+  return m;
+}
+
+function ancestors(tree: Tree, id: string | null): FolderInfo[] {
+  const out: FolderInfo[] = [];
+  const seen = new Set<string>();
+  for (let cur = id; cur && !seen.has(cur); cur = parentOf(tree, cur)) {
+    seen.add(cur);
+    const f = tree.folders.get(cur);
+    if (!f) break;
+    out.unshift(toFolderInfo(f));
+  }
+  return out;
+}
+
+/** One folder's direct contents - the client never downloads the whole tree. */
+export async function listFolder(owner: string, folderIdRaw: string | null): Promise<FolderListing> {
+  const tree = await loadTree(owner);
+  const folderId = requireFolder(tree, folderIdRaw);
+  const counts = itemCounts(tree);
+  const path = ancestors(tree, folderId);
+  const folder = folderId ? (path.pop() ?? null) : null;
+  return {
+    folder,
+    path,
+    folders: [...tree.folders.values()]
+      .filter((f) => (f.parent ?? null) === folderId)
+      .map((f) => ({ ...toFolderInfo(f), itemCount: counts.get(f._id.toString()) ?? 0 })),
+    uploads: tree.files.filter((f) => effectiveFolder(tree, f) === folderId).map(toUploadInfo),
+    usage: usageOf(tree),
+  };
+}
+
+const SEARCH_LIMIT = 200;
+
+/** Case-insensitive substring search over all folder and file names (plain text, no regex). */
+export async function searchFiles(owner: string, rawQuery: string): Promise<FileSearchResult> {
+  const q = rawQuery.normalize("NFC").trim().toLowerCase().slice(0, 100);
+  if (!q) return { folders: [], uploads: [], known: [], truncated: false };
+  const tree = await loadTree(owner);
+  const counts = itemCounts(tree);
+  const folders = [...tree.folders.values()].filter((f) => f.nameKey.includes(q) || f.name.toLowerCase().includes(q));
+  const files = tree.files.filter((f) => (f.metadata?.originalName ?? "").toLowerCase().includes(q));
+  const truncated = folders.length + files.length > SEARCH_LIMIT;
+  const outFolders = folders.slice(0, SEARCH_LIMIT);
+  const outFiles = files.slice(0, Math.max(0, SEARCH_LIMIT - outFolders.length));
+  const known = new Map<string, FolderInfo>();
+  for (const f of outFolders) for (const a of ancestors(tree, f.parent ?? null)) known.set(a.id, a);
+  for (const f of outFiles) for (const a of ancestors(tree, effectiveFolder(tree, f))) known.set(a.id, a);
+  return {
+    folders: outFolders.map((f) => ({ ...toFolderInfo(f), itemCount: counts.get(f._id.toString()) ?? 0 })),
+    uploads: outFiles.map((f) => ({ ...toUploadInfo(f), folderId: effectiveFolder(tree, f) })),
+    known: [...known.values()],
+    truncated,
+  };
+}
+
+/** Metadata of specific files (e.g. the ones a map uses). Unknown / foreign ids are reported as missing. */
+export async function lookupFiles(owner: string, ids: string[]): Promise<{ uploads: UploadInfo[]; missing: string[] }> {
+  if (!ids.length) return { uploads: [], missing: [] };
+  const { bucket } = await uploadsFiles();
+  const docs = (await bucket
+    .find({ _id: { $in: ids.map((id) => new ObjectId(id)) }, "metadata.owner": owner })
+    .toArray()) as unknown as FileDoc[];
+  const found = new Set(docs.map((d) => d._id.toString()));
+  return { uploads: docs.map(toUploadInfo), missing: ids.filter((id) => !found.has(id)) };
+}
 
 // ---------------------------------------------------------------- storing files
 

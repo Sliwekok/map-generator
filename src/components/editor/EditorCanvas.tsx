@@ -24,7 +24,7 @@ import { assetElement, pathElement, shapeElement, snapBox, uploadElement } from 
 import { relayoutText, FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { uploadFiles } from "@/lib/editor/actions";
 import { useAssets } from "@/lib/client/assets";
-import { useUploads } from "@/lib/client/uploads";
+import { useUploadMap, useUploads } from "@/lib/client/uploads";
 import { useSession } from "@/lib/client/session";
 import { useI18n } from "@/lib/i18n";
 import { FEET_PER_CELL } from "@/lib/limits";
@@ -87,7 +87,7 @@ export default function EditorCanvas() {
 
   const assets = useAssets((s) => s.byId);
   const patterns = useAssets((s) => s.patternsById);
-  const uploads = useUploads((s) => s.byId);
+  const uploads = useUploadMap();
 
   // ---- viewport size / initial fit
   useEffect(() => {

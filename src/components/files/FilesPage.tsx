@@ -13,7 +13,9 @@ export default function FilesPage() {
   const { user } = useSession();
 
   useEffect(() => {
-    void useUploads.getState().load(user);
+    // Only the root folder is listed now; subfolders load when opened.
+    useUploads.getState().reset(user);
+    if (user) void useUploads.getState().openFolder(null);
   }, [user]);
 
   return (

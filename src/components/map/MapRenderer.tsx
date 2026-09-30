@@ -7,7 +7,18 @@ import { pathD } from "@/lib/editor/geometry";
 export interface RenderLookups {
   assets: Record<string, AssetDef>;
   patterns: Record<string, PatternDef>;
-  uploads: Record<string, { url: string }>;
+  /**
+   * Uploaded images by id. `null` = known to be missing (placeholder). Ids not listed yet are
+   * rendered straight from their API URL, so a map never waits for file metadata.
+   */
+  uploads: Record<string, { url: string } | null>;
+}
+
+const UPLOAD_ID = /^[a-f0-9]{24}$/i;
+function uploadUrlOf(uploads: RenderLookups["uploads"], id: string): string | undefined {
+  const u = uploads[id];
+  if (u === null) return undefined;
+  return u?.url ?? (UPLOAD_ID.test(id) ? `/api/uploads/${id}` : undefined);
 }
 
 interface Props extends RenderLookups {
@@ -77,7 +88,7 @@ export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, a
                     inert={locked || !!el.locked}
                     asset={el.type === "asset" ? assets[el.assetId] : undefined}
                     uploadUrl={
-                      el.type === "asset" && el.assetId.startsWith("u:") ? uploads[el.assetId.slice(2)]?.url : undefined
+                      el.type === "asset" && el.assetId.startsWith("u:") ? uploadUrlOf(uploads, el.assetId.slice(2)) : undefined
                     }
                   />
                 ) : null,

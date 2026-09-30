@@ -32,7 +32,9 @@ export default function EditorShell({ id }: { id: string }) {
 
   useEffect(() => {
     void useAssets.getState().loadPremium(user);
-    void useUploads.getState().load(user);
+    // My files: list only the root folder up front; subfolders load when the user opens them.
+    useUploads.getState().reset(user);
+    if (user) void useUploads.getState().openFolder(null);
   }, [user]);
 
   useEffect(() => {
@@ -43,6 +45,10 @@ export default function EditorShell({ id }: { id: string }) {
         if (!doc) return setResult({ id, status: "missing" });
         useEditor.getState().load(doc);
         setResult({ id, status: "ready" });
+        // Names / sizes of the images this map uses (layers list, export) - not the whole library.
+        void useUploads.getState().ensureInfos(
+          doc.elements.flatMap((e) => (e.type === "asset" && e.assetId.startsWith("u:") ? [e.assetId.slice(2)] : [])),
+        );
       })
       .catch(() => !cancelled && setResult({ id, status: "error" }));
     return () => {

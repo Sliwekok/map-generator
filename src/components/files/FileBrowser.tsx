@@ -1,18 +1,21 @@
 "use client";
 
 // Folder-based browser for the user's uploaded files. Used in the editor's left panel ("panel")
-// and on the /files page ("page"). All mutations go through useUploads -> API (validated there).
-import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+// and on the /files page ("page"). Contents are loaded lazily, one folder at a time: a folder that
+// was never opened shows a skeleton while its listing loads; a folder opened before is shown
+// instantly from memory (and quietly refreshed if something changed). Images are fetched by the
+// browser only when their tile is on screen. All mutations go through useUploads -> API.
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { useI18n } from "@/lib/i18n";
 import { useSession } from "@/lib/client/session";
-import { useUploads, type UploadReport } from "@/lib/client/uploads";
+import { folderKey, useUploads, type UploadReport } from "@/lib/client/uploads";
 import { announceUpload, fileErrorMessage, skipReason } from "@/lib/client/fileMessages";
 import { ApiError } from "@/lib/client/api";
 import { toast } from "@/lib/client/toasts";
 import { UPLOAD_ACCEPT } from "@/lib/fileNames";
 import { formatBytes } from "@/lib/format";
 import { LIMITS } from "@/lib/limits";
-import type { FolderInfo, UploadInfo } from "@/lib/types";
+import type { FileSearchResult, FolderInfo, UploadInfo } from "@/lib/types";
 import { Icon } from "@/components/ui/Icon";
 import { Button, cx } from "@/components/ui/controls";
 import { MoveDialog, NameDialog } from "./FileDialogs";
@@ -33,32 +36,20 @@ type Dialog =
 const collator = typeof Intl !== "undefined" ? new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }) : null;
 const byName = (a: { name: string }, b: { name: string }) => (collator ? collator.compare(a.name, b.name) : a.name.localeCompare(b.name));
 
-export function folderPath(folders: Map<string, FolderInfo>, id: string | null): FolderInfo[] {
+/** Ancestors of `id` (top first, `id` included) from the folders known so far. */
+export function folderPath(known: Record<string, FolderInfo>, id: string | null): FolderInfo[] {
   const out: FolderInfo[] = [];
   const seen = new Set<string>();
-  for (let cur = id; cur && !seen.has(cur); cur = folders.get(cur)?.parentId ?? null) {
+  for (let cur = id; cur && !seen.has(cur); cur = known[cur]?.parentId ?? null) {
     seen.add(cur);
-    const f = folders.get(cur);
+    const f = known[cur];
     if (!f) break;
     out.unshift(f);
   }
   return out;
 }
 
-export function subtreeIds(folders: FolderInfo[], id: string): Set<string> {
-  const out = new Set([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const f of folders) {
-      if (f.parentId && out.has(f.parentId) && !out.has(f.id)) {
-        out.add(f.id);
-        grew = true;
-      }
-    }
-  }
-  return out;
-}
+const SEARCH_DELAY = 250;
 
 export default function FileBrowser({
   variant,
@@ -73,14 +64,15 @@ export default function FileBrowser({
 }) {
   const { t } = useI18n();
   const { user } = useSession();
-  const folders = useUploads((s) => s.folders);
-  const files = useUploads((s) => s.files);
+  const entries = useUploads((s) => s.entries);
+  const errors = useUploads((s) => s.errors);
+  const known = useUploads((s) => s.known);
   const usage = useUploads((s) => s.usage);
-  const loaded = useUploads((s) => s.loaded);
   const store = useUploads.getState;
 
   const [current, setCurrent] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [results, setResults] = useState<{ q: string; r: FileSearchResult } | null>(null);
   const [selection, setSelection] = useState<Set<Key>>(new Set());
   const [anchor, setAnchor] = useState<Key | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -90,35 +82,50 @@ export default function FileBrowser({
   const input = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
-  const folderMap = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
-  // The open folder may have been deleted (here or in another tab): fall back to the root.
-  const cwd = current && folderMap.has(current) ? current : null;
-  const crumbs = useMemo(() => folderPath(folderMap, cwd), [folderMap, cwd]);
-  const q = query.trim().toLowerCase();
+  const entry = entries[folderKey(current)];
+  const error = errors[folderKey(current)];
+  const needsLoad = !entry || entry.stale;
+  const q = query.trim();
 
-  const childCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const f of folders) if (f.parentId) m.set(f.parentId, (m.get(f.parentId) ?? 0) + 1);
-    for (const f of files) if (f.folderId) m.set(f.folderId, (m.get(f.folderId) ?? 0) + 1);
-    return m;
-  }, [folders, files]);
+  // Load the open folder when it isn't cached (skeleton) or is stale (cached content stays visible).
+  useEffect(() => {
+    if (!user) return;
+    store().reset(user); // no-op unless the account changed
+    if (needsLoad) void store().openFolder(current);
+  }, [user, current, needsLoad, store]);
 
-  const visibleFolders = useMemo(
-    () => (q ? folders.filter((f) => f.name.toLowerCase().includes(q)) : folders.filter((f) => (f.parentId ?? null) === cwd)).sort(byName),
-    [folders, cwd, q],
-  );
-  const visibleFiles = useMemo(
-    () =>
-      (q ? files.filter((f) => f.name.toLowerCase().includes(q)) : files.filter((f) => ((f.folderId && folderMap.has(f.folderId) ? f.folderId : null) ?? null) === cwd)).sort(
-        byName,
-      ),
-    [files, cwd, q, folderMap],
-  );
+  // The open folder was deleted (here or in another tab): go up to the nearest folder that exists.
+  // (State adjusted during render - React re-renders right away without committing the old state.)
+  if (error === "folder_not_found" && current) setCurrent(known[current]?.parentId ?? null);
+
+  // Search runs on the server (names of all folders), debounced.
+  useEffect(() => {
+    if (!q) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      store()
+        .search(q)
+        .then((r) => !cancelled && setResults({ q, r }))
+        .catch(() => !cancelled && setResults({ q, r: { folders: [], uploads: [], known: [], truncated: false } }));
+    }, SEARCH_DELAY);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [q, store]);
+
+  const crumbs = useMemo(() => folderPath(known, current), [known, current]);
+  const searchResult = q && results?.q === q ? results.r : null;
+  const loadingView = q ? !searchResult : !entry;
+
+  const visibleFolders = useMemo(() => [...((q ? searchResult?.folders : entry?.folders) ?? [])].sort(byName), [q, searchResult, entry]);
+  const visibleFiles = useMemo(() => [...((q ? searchResult?.uploads : entry?.files) ?? [])].sort(byName), [q, searchResult, entry]);
   const order: Key[] = useMemo(() => [...visibleFolders.map((f) => dKey(f.id)), ...visibleFiles.map((f) => fKey(f.id))], [visibleFolders, visibleFiles]);
   // Selection only ever contains visible items (navigating or deleting drops the rest).
   const selected = useMemo(() => new Set(order.filter((k) => selection.has(k))), [order, selection]);
   const selFiles = [...selected].filter((k) => k.startsWith("f:")).map((k) => k.slice(2));
   const selFolders = [...selected].filter((k) => k.startsWith("d:")).map((k) => k.slice(2));
+  const folderById = (id: string) => visibleFolders.find((f) => f.id === id) ?? known[id];
 
   if (!user) return null;
 
@@ -127,6 +134,7 @@ export default function FileBrowser({
   const open = (id: string | null) => {
     setCurrent(id);
     setQuery("");
+    setResults(null);
     setSelection(new Set());
     setAnchor(null);
   };
@@ -144,6 +152,8 @@ export default function FileBrowser({
     }
   };
 
+  const showError = (e: unknown) => toast(e instanceof ApiError ? fileErrorMessage(t, e.code, e.data) : t("files.errors.generic"), "error");
+
   const doMove = async (fileIds: string[], folderIds: string[], target: string | null) => {
     if (!fileIds.length && !folderIds.length) return;
     try {
@@ -151,8 +161,9 @@ export default function FileBrowser({
       if (r.moved) toast(t("files.moved", { n: r.moved }), "success");
       if (r.renamed.length) toast(t("files.movedRenamed", { n: r.renamed.length }), "info");
       setSelection(new Set());
+      setResults(null);
     } catch (e) {
-      toast(e instanceof ApiError ? fileErrorMessage(t, e.code, e.data) : t("files.errors.generic"), "error");
+      showError(e);
     }
   };
 
@@ -160,20 +171,16 @@ export default function FileBrowser({
     if (!fileIds.length && !folderIds.length) return;
     let msg: string;
     if (fileIds.length + folderIds.length > 1) msg = t("files.deleteConfirm", { n: fileIds.length + folderIds.length });
-    else if (folderIds.length) {
-      const sub = subtreeIds(folders, folderIds[0]);
-      msg = t("files.deleteFolderConfirm", {
-        name: folderMap.get(folderIds[0])?.name ?? "",
-        files: files.filter((f) => f.folderId && sub.has(f.folderId)).length,
-      });
-    } else msg = t("files.deleteFileConfirm", { name: files.find((f) => f.id === fileIds[0])?.name ?? "" });
+    else if (folderIds.length) msg = t("files.deleteFolderConfirm", { name: folderById(folderIds[0])?.name ?? "" });
+    else msg = t("files.deleteFileConfirm", { name: visibleFiles.find((f) => f.id === fileIds[0])?.name ?? "" });
     if (!confirm(msg)) return;
     try {
       await store().removeMany(fileIds, folderIds);
       toast(t("files.deleted", { n: fileIds.length + folderIds.length }), "success");
       setSelection(new Set());
+      setResults(null);
     } catch (e) {
-      toast(e instanceof ApiError ? fileErrorMessage(t, e.code, e.data) : t("files.errors.generic"), "error");
+      showError(e);
     }
   };
 
@@ -217,11 +224,11 @@ export default function FileBrowser({
       setSelection(new Set());
     } else if (e.key === "F2" && selected.size === 1) {
       e.preventDefault();
-      if (selFolders[0]) setDialog({ kind: "renameFolder", folder: folderMap.get(selFolders[0])! });
-      else if (selFiles[0]) setDialog({ kind: "renameFile", file: files.find((f) => f.id === selFiles[0])! });
-    } else if (e.key === "Backspace" && cwd && !q) {
+      if (selFolders[0]) setDialog({ kind: "renameFolder", folder: folderById(selFolders[0])! });
+      else if (selFiles[0]) setDialog({ kind: "renameFile", file: visibleFiles.find((f) => f.id === selFiles[0])! });
+    } else if (e.key === "Backspace" && current && !q) {
       e.preventDefault();
-      open(folderMap.get(cwd)?.parentId ?? null);
+      open(known[current]?.parentId ?? null);
     }
   };
 
@@ -261,8 +268,8 @@ export default function FileBrowser({
           const p = JSON.parse(raw) as { files?: unknown; folders?: unknown };
           const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
           const fl = ids(p.folders);
-          // Dropping a folder onto itself / its own subfolder is a no-op (the server would refuse it anyway).
-          if (target && fl.some((id) => subtreeIds(folders, id).has(target))) return;
+          // Dropping a folder onto itself is a no-op (moving into a subfolder is refused by the server).
+          if (target && fl.includes(target)) return;
           void doMove(ids(p.files), fl, target);
         } catch {
           /* foreign payload */
@@ -277,9 +284,8 @@ export default function FileBrowser({
   // ------------------------------------------------------------ render
 
   const isPanel = variant === "panel";
-  const dropHere = dropOn(cwd);
-  const pathLabel = (folderId: string | null) =>
-    [t("files.root"), ...folderPath(folderMap, folderId && folderMap.has(folderId) ? folderId : null).map((f) => f.name)].join(" / ");
+  const dropHere = dropOn(current);
+  const pathLabel = (folderId: string | null) => [t("files.root"), ...folderPath(known, folderId).map((f) => f.name)].join(" / ");
 
   const checkbox = (k: Key) => (
     <span
@@ -328,7 +334,7 @@ export default function FileBrowser({
           {q ? (
             <div className="truncate text-[10px] text-slate-500">{pathLabel(f.parentId)}</div>
           ) : (
-            <div className="text-[10px] text-slate-500">{t("files.count", { n: childCounts.get(f.id) ?? 0 })}</div>
+            typeof f.itemCount === "number" && <div className="text-[10px] text-slate-500">{t("files.count", { n: f.itemCount })}</div>
           )}
         </div>
         <ItemActions
@@ -364,14 +370,7 @@ export default function FileBrowser({
         title={`${u.name}\n${t("files.details", { w: u.width, h: u.height, size: formatBytes(u.size) })}`}
       >
         {checkbox(k)}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={u.url}
-          alt={u.name}
-          loading="lazy"
-          draggable={false}
-          className="aspect-square w-full rounded bg-[repeating-conic-gradient(#334155_0_25%,#1e293b_0_50%)] bg-[length:16px_16px] object-contain"
-        />
+        <Thumb key={u.url} url={u.url} name={u.name} />
         <span className="mt-1 line-clamp-1 block break-all text-[11px] text-slate-200">{u.name}</span>
         {q ? (
           <span className="line-clamp-1 block text-[10px] text-slate-500">{pathLabel(u.folderId)}</span>
@@ -389,8 +388,10 @@ export default function FileBrowser({
     );
   };
 
-  const filesPct = Math.min(100, (usage.files / LIMITS.user.maxUploads) * 100);
-  const bytesPct = Math.min(100, (usage.bytes / LIMITS.user.maxStorageBytes) * 100);
+  const filesPct = usage ? Math.min(100, (usage.files / LIMITS.user.maxUploads) * 100) : 0;
+  const bytesPct = usage ? Math.min(100, (usage.bytes / LIMITS.user.maxStorageBytes) * 100) : 0;
+  const folderGrid = isPanel ? "grid-cols-1" : "grid-cols-[repeat(auto-fill,minmax(13rem,1fr))]";
+  const fileGrid = isPanel ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))]";
 
   return (
     <div
@@ -426,7 +427,7 @@ export default function FileBrowser({
         onChange={(e) => {
           const list = Array.from(e.target.files ?? []);
           e.target.value = "";
-          void upload(list, cwd);
+          void upload(list, current);
         }}
       />
 
@@ -450,6 +451,7 @@ export default function FileBrowser({
             placeholder={t("files.search")}
             className="w-full bg-transparent py-1.5 text-sm text-slate-100 outline-none"
             maxLength={100}
+            data-testid="file-search"
           />
           {query && (
             <button onClick={() => setQuery("")} className="text-slate-400 hover:text-white" aria-label={t("common.close")}>
@@ -465,13 +467,13 @@ export default function FileBrowser({
       {/* usage */}
       <div className={cx("grid gap-2 text-[11px] text-slate-400", isPanel ? "grid-cols-2" : "max-w-md grid-cols-2")} data-testid="file-usage">
         <div>
-          {t("files.usageFiles", { used: usage.files, max: LIMITS.user.maxUploads })}
+          {usage ? t("files.usageFiles", { used: usage.files, max: LIMITS.user.maxUploads }) : " "}
           <div className="mt-1 h-1 rounded bg-slate-800">
             <div className={cx("h-1 rounded", filesPct > 90 ? "bg-red-500" : "bg-amber-500")} style={{ width: `${filesPct}%` }} />
           </div>
         </div>
         <div>
-          {t("files.usageStorage", { used: formatBytes(usage.bytes), max: formatBytes(LIMITS.user.maxStorageBytes) })}
+          {usage ? t("files.usageStorage", { used: formatBytes(usage.bytes), max: formatBytes(LIMITS.user.maxStorageBytes) }) : " "}
           <div className="mt-1 h-1 rounded bg-slate-800">
             <div className={cx("h-1 rounded", bytesPct > 90 ? "bg-red-500" : "bg-amber-500")} style={{ width: `${bytesPct}%` }} />
           </div>
@@ -481,9 +483,9 @@ export default function FileBrowser({
       {/* breadcrumbs */}
       {!q && (
         <nav className="flex flex-wrap items-center gap-0.5 text-sm" aria-label="breadcrumb" data-testid="breadcrumbs">
-          {cwd && (
+          {current && (
             <button
-              onClick={() => open(folderMap.get(cwd)?.parentId ?? null)}
+              onClick={() => open(known[current]?.parentId ?? null)}
               title={t("files.up")}
               className="mr-1 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
             >
@@ -505,11 +507,12 @@ export default function FileBrowser({
                     dropTarget === (id ?? "root") && "bg-amber-500/30 ring-1 ring-amber-400",
                   )}
                 >
-                  {id ? folderMap.get(id)?.name : t("files.root")}
+                  {id ? known[id]?.name : t("files.root")}
                 </button>
               </span>
             );
           })}
+          {entry?.stale && <span className="ml-2 h-2 w-2 animate-pulse rounded-full bg-amber-400/70" title={t("common.loading")} data-testid="revalidating" />}
         </nav>
       )}
 
@@ -560,14 +563,18 @@ export default function FileBrowser({
       )}
 
       {/* items */}
-      <div
-        className={cx(
-          "relative min-h-24 rounded-lg transition",
-          dropTarget === "here" && "bg-amber-500/10 outline-dashed outline-2 outline-amber-400",
-        )}
-      >
-        {!loaded ? (
-          <p className="p-2 text-sm text-slate-500">{t("common.loading")}</p>
+      <div className={cx("relative min-h-24 rounded-lg transition", dropTarget === "here" && "bg-amber-500/10 outline-dashed outline-2 outline-amber-400")}>
+        {loadingView && error && !q ? (
+          <div className="rounded-lg border border-red-500/40 bg-red-900/20 p-4 text-center text-sm text-red-200" data-testid="files-error">
+            {fileErrorMessage(t, error)}
+            <div className="mt-2">
+              <Button className="py-1 text-xs" onClick={() => void store().openFolder(current, true)}>
+                {t("files.retry")}
+              </Button>
+            </div>
+          </div>
+        ) : loadingView ? (
+          <Skeleton folderGrid={folderGrid} fileGrid={fileGrid} files={isPanel ? 4 : 10} />
         ) : !visibleFolders.length && !visibleFiles.length ? (
           <div className="rounded-lg border border-dashed border-slate-700 p-6 text-center text-sm text-slate-500">
             <Icon name="archive" size={28} className="mx-auto mb-2 text-slate-600" />
@@ -575,13 +582,10 @@ export default function FileBrowser({
             <div className="mt-1 text-xs">{t("files.dropHere")}</div>
           </div>
         ) : (
-          <div className="space-y-2">
-            {visibleFolders.length > 0 && (
-              <div className={cx("grid gap-2", isPanel ? "grid-cols-1" : "grid-cols-[repeat(auto-fill,minmax(13rem,1fr))]")}>{visibleFolders.map(folderTile)}</div>
-            )}
-            {visibleFiles.length > 0 && (
-              <div className={cx("grid gap-2", isPanel ? "grid-cols-2" : "grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))]")}>{visibleFiles.map(fileTile)}</div>
-            )}
+          <div className="space-y-2" data-testid="file-items">
+            {visibleFolders.length > 0 && <div className={cx("grid gap-2", folderGrid)}>{visibleFolders.map(folderTile)}</div>}
+            {visibleFiles.length > 0 && <div className={cx("grid gap-2", fileGrid)}>{visibleFiles.map(fileTile)}</div>}
+            {searchResult?.truncated && <p className="text-[11px] text-slate-500">{t("files.searchTruncated")}</p>}
           </div>
         )}
       </div>
@@ -594,7 +598,7 @@ export default function FileBrowser({
           initial=""
           onClose={() => setDialog(null)}
           onSubmit={async (name) => {
-            await store().createFolder(name, cwd);
+            await store().createFolder(name, current);
           }}
         />
       )}
@@ -604,7 +608,10 @@ export default function FileBrowser({
           label={t("files.folderName")}
           initial={dialog.folder.name}
           onClose={() => setDialog(null)}
-          onSubmit={(name) => store().renameFolder(dialog.folder.id, name)}
+          onSubmit={async (name) => {
+            await store().renameFolder(dialog.folder.id, name);
+            setResults(null);
+          }}
         />
       )}
       {dialog?.kind === "renameFile" && (
@@ -614,15 +621,17 @@ export default function FileBrowser({
           initial={dialog.file.name}
           selectBase
           onClose={() => setDialog(null)}
-          onSubmit={(name) => store().renameFile(dialog.file.id, name)}
+          onSubmit={async (name) => {
+            await store().renameFile(dialog.file.id, name);
+            setResults(null);
+          }}
         />
       )}
       {dialog?.kind === "move" && (
         <MoveDialog
-          folders={folders}
           movingFolders={dialog.folders}
           count={dialog.files.length + dialog.folders.length}
-          initial={cwd}
+          initial={current}
           onClose={() => setDialog(null)}
           onMove={async (target) => {
             setDialog(null);
@@ -630,6 +639,58 @@ export default function FileBrowser({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** Image tile that shows a pulsing placeholder until the (lazily loaded) image has arrived. */
+function Thumb({ url, name }: { url: string; name: string }) {
+  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
+  return (
+    <div className="relative aspect-square w-full overflow-hidden rounded bg-[repeating-conic-gradient(#334155_0_25%,#1e293b_0_50%)] bg-[length:16px_16px]">
+      {state !== "ok" && (
+        <div
+          className={cx("absolute inset-0 flex items-center justify-center", state === "loading" ? "animate-pulse bg-slate-700" : "bg-slate-900 text-slate-600")}
+          data-testid={state === "loading" ? "thumb-loading" : "thumb-error"}
+        >
+          {state === "error" && <Icon name="image" size={22} />}
+        </div>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={name}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        onLoad={() => setState("ok")}
+        onError={() => setState("error")}
+        className={cx("h-full w-full object-contain transition-opacity duration-200", state === "ok" ? "opacity-100" : "opacity-0")}
+      />
+    </div>
+  );
+}
+
+/** Placeholder shown while a folder that was never opened is being listed. */
+function Skeleton({ folderGrid, fileGrid, files }: { folderGrid: string; fileGrid: string; files: number }) {
+  return (
+    <div className="space-y-2" data-testid="files-skeleton" aria-busy="true">
+      <div className={cx("grid gap-2", folderGrid)}>
+        {[0, 1].map((i) => (
+          <div key={i} className="flex animate-pulse items-center gap-2 rounded-lg bg-slate-800 p-2 ring-1 ring-slate-700">
+            <div className="h-6 w-6 rounded bg-slate-700" />
+            <div className="h-3 flex-1 rounded bg-slate-700" />
+          </div>
+        ))}
+      </div>
+      <div className={cx("grid gap-2", fileGrid)}>
+        {Array.from({ length: files }, (_, i) => (
+          <div key={i} className="animate-pulse rounded-lg bg-slate-800 p-1.5 ring-1 ring-slate-700">
+            <div className="aspect-square w-full rounded bg-slate-700" />
+            <div className="mt-1.5 h-2.5 w-3/4 rounded bg-slate-700" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
