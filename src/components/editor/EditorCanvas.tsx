@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ElementPreview, MapRenderer } from "@/components/map/MapRenderer";
+import { ElementPreview, MapBackground, MapGrid, MapLayer, TextureDefs, elementsByLayer, layerStates, texturesUsed } from "@/components/map/MapRenderer";
 import { requestRename } from "@/lib/editor/itemLabel";
 import { useEditor, makeText, type View } from "@/lib/editor/store";
 import {
@@ -37,6 +37,15 @@ import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 
 export const ASSET_MIME = "application/x-mapforge-asset";
 
+/** How long the wheel has to pause before the map is redrawn at the new zoom. */
+const ZOOM_SETTLE_MS = 160;
+/** Zoom per wheel delta unit. One mouse-wheel notch (~100) ≈ 5% zoom. */
+const WHEEL_ZOOM_SPEED = 0.0005;
+/** Zoom per delta unit for Ctrl+wheel / trackpad pinch (pinch sends small deltas). */
+const PINCH_ZOOM_SPEED = 0.004;
+/** Caps a single wheel event so fast-spinning wheels or line-mode deltas can't jump. */
+const MAX_WHEEL_DELTA = 100;
+
 type Handle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 const HANDLES: Record<Handle, [number, number]> = {
   nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0],
@@ -56,7 +65,18 @@ interface Frame {
 
 type Gesture =
   | { kind: "pan"; sx: number; sy: number; view: View }
-  | { kind: "move"; start: Pt; base: MapElement[]; box: Box; moved: boolean; clickId: string | null; sx: number; sy: number }
+  | {
+      kind: "move";
+      start: Pt;
+      base: MapElement[];
+      box: Box;
+      moved: boolean;
+      clickId: string | null;
+      sx: number;
+      sy: number;
+      dx: number; // current offset (snapped), map px
+      dy: number;
+    }
   | { kind: "marquee"; start: Pt; additive: boolean; baseSel: string[] }
   | { kind: "resize"; handle: Handle; frame: Frame; base: MapElement[] }
   | { kind: "rotate"; pivot: Pt; startAngle: number; base: MapElement[]; single: boolean }
@@ -97,10 +117,24 @@ export default function EditorCanvas() {
   // The stroke being painted is drawn on its own layer on top of the map (and committed on
   // release), so the browser doesn't have to repaint the whole map on every pointer move.
   const [brushPreview, setBrushPreview] = useState<BrushElement | null>(null);
+  // Items being dragged: drawn once on a layer of their own that is only moved (CSS transform)
+  // while dragging - nothing is re-rendered or repainted per pointer move. Committed on release.
+  const [floating, setFloating] = useState<MapElement[] | null>(null);
+  const floatRef = useRef<HTMLDivElement>(null);
+  const selOverlayRef = useRef<SVGGElement>(null);
   const lastPointer = useRef<Pt | null>(null);
   const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const didFit = useRef<string | null>(null);
+  // The map is only drawn once it has been fitted to the viewport (no wasted first paint).
+  const [fittedFor, setFittedFor] = useState<string | null>(null);
+  const [renderedZoom, setRenderedZoom] = useState(1);
+  const renderedZoomRef = useRef(1);
+  useEffect(() => {
+    renderedZoomRef.current = renderedZoom;
+  }, [renderedZoom]);
+  /** When the wheel last zoomed - while zooming continuously the map is only scaled, not redrawn. */
+  const lastWheel = useRef(0);
 
   const doc = useEditor((s) => s.doc);
   const mapId = useEditor((s) => s.mapId);
@@ -128,6 +162,8 @@ export default function EditorCanvas() {
     if (mapId && size.w > 0 && didFit.current !== mapId) {
       didFit.current = mapId;
       useEditor.getState().fit(size.w, size.h);
+      setRenderedZoom(useEditor.getState().view.zoom);
+      setFittedFor(mapId);
     }
   }, [mapId, size.w, size.h]);
 
@@ -213,18 +249,37 @@ export default function EditorCanvas() {
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      lastWheel.current = performance.now();
       const s = useEditor.getState();
       if (e.shiftKey && !e.ctrlKey) {
         s.setView({ x: s.view.x - (e.deltaY || e.deltaX) });
         return;
       }
       const rect = el.getBoundingClientRect();
-      const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015));
+      // deltaMode 1 = lines (Firefox), 2 = pages: convert to pixels before scaling
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+      const delta = Math.max(-MAX_WHEEL_DELTA, Math.min(MAX_WHEEL_DELTA, e.deltaY * unit));
+      const factor = Math.exp(-delta * (e.ctrlKey ? PINCH_ZOOM_SPEED : WHEEL_ZOOM_SPEED));
       s.zoomAt(factor, { x: e.clientX - rect.left, y: e.clientY - rect.top });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
+
+  // ---- zoom the browser draws the map at
+  // Panning only moves the already drawn map (a GPU-composited layer), so it never repaints.
+  // A zoom change needs a redraw at the new scale: during a burst of wheel steps the drawn map
+  // is just scaled for immediate feedback, and redrawn sharp once the wheel pauses.
+  useEffect(() => {
+    if (renderedZoom === view.zoom) return;
+    const wait = performance.now() - lastWheel.current < ZOOM_SETTLE_MS ? ZOOM_SETTLE_MS : 0;
+    const timer = setTimeout(() => setRenderedZoom(view.zoom), wait);
+    return () => clearTimeout(timer);
+  }, [view.zoom, renderedZoom]);
+
+  // Elements grouped by layer: each layer is its own SVG, re-rendered only when its elements change.
+  const byLayer = useMemo(() => (doc ? elementsByLayer(doc.elements) : null), [doc]);
+  const textures = useMemo(() => (doc ? texturesUsed(doc.elements, patterns) : []), [doc, patterns]);
 
   // ---- selection frame
   const selectedEls = useMemo(() => {
@@ -386,6 +441,8 @@ export default function EditorCanvas() {
         clickId,
         sx: e.clientX,
         sy: e.clientY,
+        dx: 0,
+        dy: 0,
       };
       return;
     }
@@ -413,7 +470,12 @@ export default function EditorCanvas() {
       }
       case "move": {
         if (!g.moved && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 3) return;
-        g.moved = true;
+        if (!g.moved) {
+          g.moved = true;
+          const lockedLayers = new Set(doc.layers.filter((l) => l.locked).map((l) => l.id));
+          g.base = g.base.filter((b) => !b.locked && !lockedLayers.has(b.layer));
+          setFloating(g.base.length ? g.base : null);
+        }
         let dx = world.x - g.start.x;
         let dy = world.y - g.start.y;
         if (s.snap && !e.altKey && doc.grid.size > 0) {
@@ -421,18 +483,9 @@ export default function EditorCanvas() {
           dx = target.x - g.box.x;
           dy = target.y - g.box.y;
         }
-        const baseById = new Map(g.base.map((b) => [b.id, b]));
-        const lockedLayers = new Set(doc.layers.filter((l) => l.locked).map((l) => l.id));
-        s.setDoc(
-          (d) => ({
-            ...d,
-            elements: d.elements.map((el) => {
-              const b = baseById.get(el.id);
-              return b && !b.locked && !lockedLayers.has(b.layer) ? translateElement(b, dx, dy) : el;
-            }),
-          }),
-          { history: false },
-        );
+        g.dx = dx;
+        g.dy = dy;
+        placeFloating(dx, dy);
         break;
       }
       case "marquee": {
@@ -575,6 +628,14 @@ export default function EditorCanvas() {
     s.updateElements(ids, (el) => (el.type === "brush" ? erasePass(g.base.get(el.id)!, pts, g.size) : el), { history: false });
   };
 
+  /** Moves the dragged items' layer and the selection outline (directly - no re-render per move). */
+  const placeFloating = (dx: number, dy: number) => {
+    const rz = renderedZoomRef.current;
+    if (floatRef.current) floatRef.current.style.transform = dx || dy ? `translate(${dx * rz}px, ${dy * rz}px)` : "";
+    if (dx || dy) selOverlayRef.current?.setAttribute("transform", `translate(${dx} ${dy})`);
+    else selOverlayRef.current?.removeAttribute("transform");
+  };
+
   /** Brush / eraser outline following the pointer (updated directly - no re-render per move). */
   const moveRing = (world: Pt | null) => {
     const ring = ringRef.current;
@@ -599,10 +660,17 @@ export default function EditorCanvas() {
     const s = useEditor.getState();
     if (!g || !s.doc) return;
     switch (g.kind) {
-      case "move":
+      case "move": {
+        if (g.moved && (g.dx || g.dy) && g.base.length) {
+          const moved = new Map(g.base.map((b) => [b.id, translateElement(b, g.dx, g.dy)]));
+          s.setDoc((d) => ({ ...d, elements: d.elements.map((el) => moved.get(el.id) ?? el) }), { history: false });
+        }
         s.endGesture();
+        placeFloating(0, 0);
+        setFloating(null);
         if (!g.moved && g.clickId) s.select([g.clickId]);
         break;
+      }
       case "resize":
       case "rotate":
         s.endGesture();
@@ -729,8 +797,37 @@ export default function EditorCanvas() {
   const hs = 9 / z; // handle size in map units
   const editing = editingTextId ? (doc.elements.find((x) => x.id === editingTextId) as TextElement | undefined) : undefined;
   // While a stroke continues an existing element, the overlay shows that element - hide the original.
-  const hiddenId = editing?.id ?? (brushPreview && doc.elements.some((x) => x.id === brushPreview.id) ? brushPreview.id : null);
-  const hidden = hiddenId ? new Set([hiddenId]) : undefined;
+  const hiddenIds = [
+    ...(editing ? [editing.id] : []),
+    ...(brushPreview && doc.elements.some((x) => x.id === brushPreview.id) ? [brushPreview.id] : []),
+    ...(floating ?? []).map((x) => x.id),
+  ];
+  // Per layer, so the other layers' memoised content stays untouched.
+  const hiddenByLayer: Partial<Record<string, Set<string>>> = {};
+  if (hiddenIds.length) {
+    const ids = new Set(hiddenIds);
+    for (const el of doc.elements) if (ids.has(el.id)) (hiddenByLayer[el.layer] ??= new Set()).add(el.id);
+  }
+  const floatingByLayer = floating ? elementsByLayer(floating) : null;
+  const layerState = layerStates(doc);
+  const rz = renderedZoom;
+  // Items are hit-testable only with the select tool (pan / drawing tools work on the empty canvas).
+  const hits = tool === "select" && !spaceDown;
+  const layerSvg = (key: string, children: React.ReactNode, testId?: string) => (
+    <svg
+      key={key}
+      width={doc.width * rz}
+      height={doc.height * rz}
+      viewBox={`0 0 ${doc.width} ${doc.height}`}
+      preserveAspectRatio="none"
+      className="absolute left-0 top-0 block"
+      // Own compositing layer: editing one layer doesn't repaint the others.
+      style={{ willChange: "transform", pointerEvents: "none" }}
+      data-testid={testId}
+    >
+      {children}
+    </svg>
+  );
 
   const cursor =
     panning ? "grabbing" : spaceDown || tool === "pan" ? "grab" : tool === "text" ? "text" : tool === "select" ? "default" : "crosshair";
@@ -756,80 +853,141 @@ export default function EditorCanvas() {
       onContextMenu={onContextMenu}
       data-testid="editor-canvas"
     >
-      <svg width="100%" height="100%" className="absolute inset-0 block">
-        <g transform={`translate(${view.x} ${view.y}) scale(${z})`}>
-          <rect x={6 / z} y={8 / z} width={doc.width} height={doc.height} fill="rgba(0,0,0,0.45)" />
-          <MapRenderer
-            doc={doc}
-            idPrefix="ed"
-            showGrid={showGrid}
-            interactive={tool === "select" && !spaceDown}
-            hiddenIds={hidden}
-            assets={assets}
-            patterns={patterns}
-            uploads={uploads}
-          />
-          <rect x={0} y={0} width={doc.width} height={doc.height} fill="none" stroke="rgba(0,0,0,0.6)" strokeWidth={1 / z} pointerEvents="none" />
-
-          {/* per-element outlines */}
-          {selectedEls.map((el) => (
-            <polygon
-              key={el.id}
-              points={corners(el).map((p) => `${p.x},${p.y}`).join(" ")}
-              fill="none"
-              stroke={selectionEditable ? "#f59e0b" : "#ef4444"}
-              strokeWidth={1.5 / z}
-              strokeDasharray={selectionEditable ? undefined : `${4 / z} ${3 / z}`}
-              pointerEvents="none"
-            />
-          ))}
-
-          {/* transform frame */}
-          {frame && selectionEditable && tool === "select" && !editing && (
-            <g transform={`translate(${frame.cx} ${frame.cy}) rotate(${frame.angle})`}>
-              {selectedEls.length > 1 && (
-                <rect
-                  x={-frame.w / 2}
-                  y={-frame.h / 2}
-                  width={frame.w}
-                  height={frame.h}
-                  fill="none"
-                  stroke="#f59e0b"
-                  strokeWidth={1 / z}
-                  strokeDasharray={`${6 / z} ${4 / z}`}
-                  pointerEvents="none"
-                />
-              )}
-              <line x1={0} y1={-frame.h / 2} x2={0} y2={-frame.h / 2 - 26 / z} stroke="#f59e0b" strokeWidth={1.5 / z} />
-              <circle
-                data-handle="rot"
-                cx={0}
-                cy={-frame.h / 2 - 26 / z}
-                r={hs * 0.7}
-                fill="#fff"
-                stroke="#f59e0b"
-                strokeWidth={2 / z}
-                style={{ cursor: "grab" }}
-              />
-              {(Object.keys(HANDLES) as Handle[]).map((h) => {
-                const [hx, hy] = HANDLES[h];
-                return (
-                  <rect
-                    key={h}
-                    data-handle={h}
-                    x={(hx * frame.w) / 2 - hs / 2}
-                    y={(hy * frame.h) / 2 - hs / 2}
-                    width={hs}
-                    height={hs}
-                    fill="#fff"
-                    stroke="#f59e0b"
-                    strokeWidth={1.5 / z}
-                    style={{ cursor: HANDLE_CURSOR[h] }}
-                  />
-                );
-              })}
-            </g>
+      {fittedFor === mapId && byLayer && (
+        <div
+          data-testid="map-view"
+          className="pointer-events-none absolute left-0 top-0 origin-top-left"
+          style={{
+            width: doc.width * rz,
+            height: doc.height * rz,
+            transform: `translate(${view.x}px, ${view.y}px) scale(${z / rz})`,
+            willChange: "transform",
+            boxShadow: "6px 8px 0 rgba(0,0,0,0.45)",
+            outline: "1px solid rgba(0,0,0,0.6)",
+            // Set here, not inherited from the canvas: changing the canvas cursor (tools, panning)
+            // would otherwise restyle every node of the map.
+            cursor: "default",
+          }}
+        >
+          {layerSvg("bg", <MapBackground doc={doc} idPrefix="ed" patterns={patterns} />)}
+          {textures.length > 0 && (
+            <svg width={0} height={0} className="absolute" aria-hidden>
+              <TextureDefs textures={textures} idPrefix="ed" />
+            </svg>
           )}
+          {LAYER_ORDER.map((layerId) => {
+            const ls = layerState[layerId];
+            if (ls && !ls.visible) return null;
+            return layerSvg(
+              layerId,
+              <g pointerEvents={hits ? "auto" : "none"}>
+                <MapLayer
+                  layerId={layerId}
+                  elements={byLayer[layerId]}
+                  locked={!!ls?.locked}
+                  idPrefix="ed"
+                  interactive
+                  hidden={hiddenByLayer[layerId] ?? null}
+                  assetImages
+                  assets={assets}
+                  patterns={patterns}
+                  uploads={uploads}
+                />
+              </g>,
+            );
+          })}
+          {showGrid && doc.grid.enabled && layerSvg("grid", <MapGrid doc={doc} idPrefix="ed" />)}
+          {floatingByLayer && (
+            <div ref={floatRef} className="absolute left-0 top-0" style={{ willChange: "transform" }} data-testid="drag-layer">
+              {layerSvg(
+                "floating",
+                LAYER_ORDER.map((layerId) =>
+                  floatingByLayer[layerId].length ? (
+                    <MapLayer
+                      key={layerId}
+                      layerId={layerId}
+                      elements={floatingByLayer[layerId]}
+                      locked={false}
+                      idPrefix="ed"
+                      assetImages
+                      assets={assets}
+                      patterns={patterns}
+                      uploads={uploads}
+                    />
+                  ) : null,
+                ),
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Selection, handles and drawing previews: a light layer of its own on top of the map. */}
+      <svg width="100%" height="100%" className="absolute inset-0 block" style={{ pointerEvents: "none", willChange: "transform" }}>
+        <g transform={`translate(${view.x} ${view.y}) scale(${z})`}>
+
+          <g ref={selOverlayRef}>
+            {/* per-element outlines */}
+            {selectedEls.map((el) => (
+              <polygon
+                key={el.id}
+                points={corners(el).map((p) => `${p.x},${p.y}`).join(" ")}
+                fill="none"
+                stroke={selectionEditable ? "#f59e0b" : "#ef4444"}
+                strokeWidth={1.5 / z}
+                strokeDasharray={selectionEditable ? undefined : `${4 / z} ${3 / z}`}
+                pointerEvents="none"
+              />
+            ))}
+
+            {/* transform frame */}
+            {frame && selectionEditable && tool === "select" && !editing && (
+              <g transform={`translate(${frame.cx} ${frame.cy}) rotate(${frame.angle})`}>
+                {selectedEls.length > 1 && (
+                  <rect
+                    x={-frame.w / 2}
+                    y={-frame.h / 2}
+                    width={frame.w}
+                    height={frame.h}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth={1 / z}
+                    strokeDasharray={`${6 / z} ${4 / z}`}
+                    pointerEvents="none"
+                  />
+                )}
+                <line x1={0} y1={-frame.h / 2} x2={0} y2={-frame.h / 2 - 26 / z} stroke="#f59e0b" strokeWidth={1.5 / z} />
+                <circle
+                  data-handle="rot"
+                  cx={0}
+                  cy={-frame.h / 2 - 26 / z}
+                  r={hs * 0.7}
+                  fill="#fff"
+                  stroke="#f59e0b"
+                  strokeWidth={2 / z}
+                  style={{ cursor: "grab", pointerEvents: "all" }}
+                />
+                {(Object.keys(HANDLES) as Handle[]).map((h) => {
+                  const [hx, hy] = HANDLES[h];
+                  return (
+                    <rect
+                      key={h}
+                      data-handle={h}
+                      x={(hx * frame.w) / 2 - hs / 2}
+                      y={(hy * frame.h) / 2 - hs / 2}
+                      width={hs}
+                      height={hs}
+                      fill="#fff"
+                      stroke="#f59e0b"
+                      strokeWidth={1.5 / z}
+                      style={{ cursor: HANDLE_CURSOR[h], pointerEvents: "all" }}
+                    />
+                  );
+                })}
+              </g>
+            )}
+
+          </g>
 
           {marquee && (
             <rect

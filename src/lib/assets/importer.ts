@@ -54,7 +54,10 @@ const LAYERS: readonly LayerId[] = ["background", "terrain", "objects", "tokens"
 const ACCESS: readonly AssetAccess[] = ["free", "user"];
 
 export const IMPORT_LIMITS = {
+  /** Limit for the drawing itself (after <metadata>, comments, <title> etc. are stripped). */
   maxSvgBytes: 256 * 1024,
+  /** Limit for the file on disk - editors and provenance tools (C2PA) can add large metadata blocks. */
+  maxFileBytes: 1024 * 1024,
   maxDepth: 4, // sub-folders inside a category / patterns folder
   maxCells: 100,
   maxTags: 20,
@@ -416,8 +419,8 @@ function readSvg(file: string, id: string, err: Report, warn: Report): { viewBox
   let src: string;
   try {
     const st = fs.statSync(file);
-    if (st.size > IMPORT_LIMITS.maxSvgBytes) {
-      err(file, `larger than ${IMPORT_LIMITS.maxSvgBytes / 1024} KB - skipped`);
+    if (st.size > IMPORT_LIMITS.maxFileBytes) {
+      err(file, `file larger than ${IMPORT_LIMITS.maxFileBytes / 1024} KB - skipped`);
       return null;
     }
     src = fs.readFileSync(file, "utf8").replace(/^﻿/, "");
@@ -442,6 +445,10 @@ function readSvg(file: string, id: string, err: Report, warn: Report): { viewBox
     .replace(/<metadata[\s\S]*?<\/metadata>/gi, "")
     .replace(/<title[\s\S]*?<\/title>/gi, "")
     .trim();
+  if (Buffer.byteLength(cleaned) > IMPORT_LIMITS.maxSvgBytes) {
+    err(file, `larger than ${IMPORT_LIMITS.maxSvgBytes / 1024} KB (without metadata) - skipped`);
+    return null;
+  }
   const m = cleaned.match(/^<svg\b([^>]*)>([\s\S]*)<\/svg>$/i);
   if (!m) {
     err(file, "must contain exactly one <svg>…</svg> root - skipped");

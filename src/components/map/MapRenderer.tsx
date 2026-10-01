@@ -1,9 +1,10 @@
-import { memo } from "react";
-import type { AssetDef, BrushElement, MapContent, MapElement, PatternDef } from "@/lib/types";
+import { memo, useMemo } from "react";
+import type { AssetDef, BrushElement, LayerId, LayerState, MapContent, MapElement, PatternDef } from "@/lib/types";
 import { LAYER_ORDER } from "@/lib/types";
 import { FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { pathD } from "@/lib/editor/geometry";
 import { featherOf, mainSize, smoothD } from "@/lib/editor/brushShape";
+import { assetImage } from "@/lib/client/assetImages";
 
 export interface RenderLookups {
   assets: Record<string, AssetDef>;
@@ -30,22 +31,21 @@ interface Props extends RenderLookups {
   showGrid: boolean;
   /** Adds data attributes and hit areas used by the editor canvas. */
   interactive?: boolean;
-  hiddenIds?: ReadonlySet<string>;
+  /** Elements left out (the editor draws them on an overlay while they are being edited). */
+  hidden?: ReadonlySet<string> | null;
 }
 
 /**
  * Renders a map in map-space coordinates (0..width, 0..height) as pure SVG.
- * Used by the editor canvas, thumbnails, the home page demo and the SVG/PNG export,
- * so what you see is exactly what you export.
+ * Used by thumbnails, the home page demo and the SVG/PNG export, so what you see is exactly
+ * what you export. The editor canvas draws the same parts (background, one group per layer,
+ * grid) into separate stacked SVGs instead, so each part is cached by the browser on its own.
  */
-export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, assets, patterns, uploads, assetsPending }: Props) {
-  const { width, height, background, grid } = doc;
-  const pattern = background.pattern ? patterns[background.pattern] : undefined;
-  const tile = (grid.size || 70) * (background.patternScale || 1);
+export function MapRenderer({ doc, idPrefix, showGrid, interactive, hidden, assets, patterns, uploads, assetsPending }: Props) {
+  const { width, height } = doc;
   const clipId = `${idPrefix}-clip`;
-  const bgPatId = `${idPrefix}-bgpat`;
-  const dotPatId = `${idPrefix}-dots`;
-  const layerState = Object.fromEntries(doc.layers.map((l) => [l.id, l]));
+  const byLayer = elementsByLayer(doc.elements);
+  const layerState = layerStates(doc);
 
   return (
     <g>
@@ -53,7 +53,86 @@ export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, a
         <clipPath id={clipId}>
           <rect x={0} y={0} width={width} height={height} />
         </clipPath>
-        {pattern && (
+      </defs>
+      <TextureDefs textures={texturesUsed(doc.elements, patterns)} idPrefix={idPrefix} />
+      <g clipPath={`url(#${clipId})`}>
+        <MapBackground doc={doc} idPrefix={idPrefix} patterns={patterns} />
+        {LAYER_ORDER.map((layerId) => {
+          const ls = layerState[layerId];
+          if (ls && !ls.visible) return null;
+          return (
+            <MapLayer
+              key={layerId}
+              layerId={layerId}
+              elements={byLayer[layerId]}
+              locked={!!ls?.locked}
+              idPrefix={idPrefix}
+              interactive={interactive}
+              hidden={hidden}
+              assets={assets}
+              patterns={patterns}
+              uploads={uploads}
+              assetsPending={assetsPending}
+            />
+          );
+        })}
+        {showGrid && <MapGrid doc={doc} idPrefix={idPrefix} />}
+      </g>
+    </g>
+  );
+}
+
+export const textureTemplateId = (idPrefix: string, patternId: string) => `${idPrefix}-tex-${patternId}`;
+
+/** Library textures used by brush strokes, each defined once as a pattern template the strokes re-use. */
+export function texturesUsed(elements: MapElement[], patterns: RenderLookups["patterns"]): PatternDef[] {
+  const seen = new Map<string, PatternDef>();
+  for (const el of elements) {
+    if (el.type !== "brush" || !el.texture || el.texture.startsWith("u:") || seen.has(el.texture)) continue;
+    const p = patterns[el.texture];
+    if (p) seen.set(el.texture, p);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Pattern templates for brush textures (see BrushView). Must not be inside a `display: none`
+ * subtree, or the browser has nothing to draw the patterns from.
+ */
+export const TextureDefs = memo(function TextureDefs({ textures, idPrefix }: { textures: PatternDef[]; idPrefix: string }) {
+  if (!textures.length) return null;
+  return (
+    <defs>
+      {textures.map((p) => (
+        <pattern key={p.id} id={textureTemplateId(idPrefix, p.id)} patternUnits="userSpaceOnUse" width={p.size} height={p.size}>
+          <svg width={p.size} height={p.size} viewBox={`0 0 ${p.size} ${p.size}`} preserveAspectRatio="none" dangerouslySetInnerHTML={{ __html: p.body }} />
+        </pattern>
+      ))}
+    </defs>
+  );
+}, (a, b) => a.idPrefix === b.idPrefix && a.textures.length === b.textures.length && a.textures.every((t, i) => t === b.textures[i]));
+
+/** Elements of each layer, in drawing order (one pass over the map). */
+export function elementsByLayer(elements: MapElement[]): Record<LayerId, MapElement[]> {
+  const out = Object.fromEntries(LAYER_ORDER.map((l) => [l, [] as MapElement[]])) as Record<LayerId, MapElement[]>;
+  for (const el of elements) (out[el.layer] ??= []).push(el);
+  return out;
+}
+
+export function layerStates(doc: MapContent): Partial<Record<LayerId, LayerState>> {
+  return Object.fromEntries(doc.layers.map((l) => [l.id, l]));
+}
+
+/** Background colour + texture. */
+export function MapBackground({ doc, idPrefix, patterns }: { doc: MapContent; idPrefix: string; patterns: RenderLookups["patterns"] }) {
+  const { width, height, background, grid } = doc;
+  const pattern = background.pattern ? patterns[background.pattern] : undefined;
+  const tile = (grid.size || 70) * (background.patternScale || 1);
+  const bgPatId = `${idPrefix}-bgpat`;
+  return (
+    <>
+      {pattern && (
+        <defs>
           <pattern id={bgPatId} patternUnits="userSpaceOnUse" width={tile} height={tile}>
             <svg
               width={tile}
@@ -63,55 +142,110 @@ export function MapRenderer({ doc, idPrefix, showGrid, interactive, hiddenIds, a
               dangerouslySetInnerHTML={{ __html: pattern.body }}
             />
           </pattern>
-        )}
-        {showGrid && grid.enabled && grid.style === "dots" && (
-          <pattern id={dotPatId} patternUnits="userSpaceOnUse" width={grid.size} height={grid.size}>
-            <circle cx={0} cy={0} r={grid.lineWidth * 1.6} fill={grid.color} />
-            <circle cx={grid.size} cy={0} r={grid.lineWidth * 1.6} fill={grid.color} />
-            <circle cx={0} cy={grid.size} r={grid.lineWidth * 1.6} fill={grid.color} />
-            <circle cx={grid.size} cy={grid.size} r={grid.lineWidth * 1.6} fill={grid.color} />
-          </pattern>
-        )}
-      </defs>
-      <g clipPath={`url(#${clipId})`}>
-        <rect x={0} y={0} width={width} height={height} fill={background.color} data-bg={interactive ? "1" : undefined} />
-        {pattern && <rect x={0} y={0} width={width} height={height} fill={`url(#${bgPatId})`} pointerEvents="none" />}
-        {LAYER_ORDER.map((layerId) => {
-          const ls = layerState[layerId];
-          if (ls && !ls.visible) return null;
-          const locked = !!ls?.locked;
-          return (
-            <g key={layerId} data-layer={layerId}>
-              {doc.elements.map((el) =>
-                el.layer === layerId && !hiddenIds?.has(el.id) ? (
-                  <ElementView
-                    key={el.id}
-                    el={el}
-                    idPrefix={idPrefix}
-                    interactive={interactive}
-                    inert={locked || !!el.locked}
-                    asset={el.type === "asset" ? assets[el.assetId] : undefined}
-                    pattern={el.type === "brush" && el.texture && !el.texture.startsWith("u:") ? patterns[el.texture] : undefined}
-                    pending={assetsPending}
-                    uploadUrl={uploadRef(el) ? uploadUrlOf(uploads, uploadRef(el)!) : undefined}
-                  />
-                ) : null,
-              )}
-            </g>
-          );
-        })}
-        {showGrid && grid.enabled && (
-          <g opacity={grid.opacity} pointerEvents="none">
-            {grid.style === "dots" ? (
-              <rect x={0} y={0} width={width} height={height} fill={`url(#${dotPatId})`} />
-            ) : (
-              <path d={gridPath(width, height, grid.size)} stroke={grid.color} strokeWidth={grid.lineWidth} fill="none" />
-            )}
-          </g>
-        )}
-      </g>
+        </defs>
+      )}
+      <rect x={0} y={0} width={width} height={height} fill={background.color} />
+      {pattern && <rect x={0} y={0} width={width} height={height} fill={`url(#${bgPatId})`} pointerEvents="none" />}
+    </>
+  );
+}
+
+/** Grid lines / dots on top of the map (nothing when the grid is switched off). */
+export function MapGrid({ doc, idPrefix }: { doc: MapContent; idPrefix: string }) {
+  const { width, height, grid } = doc;
+  const dotPatId = `${idPrefix}-dots`;
+  const d = useMemo(
+    () => (grid.enabled && grid.style !== "dots" ? gridPath(width, height, grid.size) : ""),
+    [grid.enabled, grid.style, width, height, grid.size],
+  );
+  if (!grid.enabled) return null;
+  return (
+    <g opacity={grid.opacity} pointerEvents="none">
+      {grid.style === "dots" ? (
+        <>
+          <defs>
+            <pattern id={dotPatId} patternUnits="userSpaceOnUse" width={grid.size} height={grid.size}>
+              <circle cx={0} cy={0} r={grid.lineWidth * 1.6} fill={grid.color} />
+              <circle cx={grid.size} cy={0} r={grid.lineWidth * 1.6} fill={grid.color} />
+              <circle cx={0} cy={grid.size} r={grid.lineWidth * 1.6} fill={grid.color} />
+              <circle cx={grid.size} cy={grid.size} r={grid.lineWidth * 1.6} fill={grid.color} />
+            </pattern>
+          </defs>
+          <rect x={0} y={0} width={width} height={height} fill={`url(#${dotPatId})`} />
+        </>
+      ) : (
+        <path d={d} stroke={grid.color} strokeWidth={grid.lineWidth} fill="none" />
+      )}
     </g>
   );
+}
+
+interface LayerProps extends RenderLookups {
+  layerId: LayerId;
+  /** This layer's elements in drawing order. */
+  elements: MapElement[];
+  locked: boolean;
+  idPrefix: string;
+  interactive?: boolean;
+  hidden?: ReadonlySet<string> | null;
+  /** Draw built-in assets as cached SVG images (editor) instead of inline markup. */
+  assetImages?: boolean;
+}
+
+/**
+ * One layer of the map. Memoised on the layer's own elements, so editing one layer
+ * (dragging a token, painting terrain) doesn't re-render - or make the browser repaint - the others.
+ */
+export const MapLayer = memo(function MapLayer({
+  layerId,
+  elements,
+  locked,
+  idPrefix,
+  interactive,
+  hidden,
+  assetImages,
+  assets,
+  patterns,
+  uploads,
+  assetsPending,
+}: LayerProps) {
+  return (
+    <g data-layer={layerId}>
+      {elements.map((el) =>
+        hidden?.has(el.id) ? null : (
+          <ElementView
+            key={el.id}
+            el={el}
+            idPrefix={idPrefix}
+            interactive={interactive}
+            inert={locked || !!el.locked}
+            asset={el.type === "asset" ? assets[el.assetId] : undefined}
+            pattern={el.type === "brush" && el.texture && !el.texture.startsWith("u:") ? patterns[el.texture] : undefined}
+            pending={assetsPending}
+            asImage={assetImages}
+            uploadUrl={uploadRef(el) ? uploadUrlOf(uploads, uploadRef(el)!) : undefined}
+          />
+        ),
+      )}
+    </g>
+  );
+}, sameLayerProps);
+
+function sameLayerProps(a: LayerProps, b: LayerProps): boolean {
+  for (const k of Object.keys(a) as (keyof LayerProps)[]) {
+    if (k === "elements" || k === "hidden") continue;
+    if (a[k] !== b[k]) return false;
+  }
+  if (a.hidden !== b.hidden) {
+    if (!a.hidden?.size !== !b.hidden?.size) return false;
+    if (a.hidden && b.hidden && (a.hidden.size !== b.hidden.size || [...a.hidden].some((id) => !b.hidden!.has(id)))) return false;
+  }
+  const x = a.elements;
+  const y = b.elements;
+  if (x === y) return true;
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+  return true;
 }
 
 export function gridPath(w: number, h: number, size: number): string {
@@ -138,14 +272,34 @@ export function ElementPreview({
 }) {
   const ref = uploadRef(el);
   return (
-    <ElementView
-      el={el}
-      idPrefix={idPrefix}
-      inert
-      pattern={el.type === "brush" && el.texture && !el.texture.startsWith("u:") ? patterns[el.texture] : undefined}
-      uploadUrl={ref ? uploadUrlOf(uploads, ref) : undefined}
-    />
+    <>
+      <TextureDefs textures={texturesUsed([el], patterns)} idPrefix={idPrefix} />
+      <ElementView
+        el={el}
+        idPrefix={idPrefix}
+        inert
+        pattern={el.type === "brush" && el.texture && !el.texture.startsWith("u:") ? patterns[el.texture] : undefined}
+        uploadUrl={ref ? uploadUrlOf(uploads, ref) : undefined}
+      />
+    </>
   );
+}
+
+// Path data is rebuilt only when the points change: moving, rotating or restyling an element
+// keeps its points array, so long strokes aren't re-encoded on every pointer move.
+const smoothCache = new WeakMap<[number, number][], string>();
+function cachedSmoothD(points: [number, number][]): string {
+  let d = smoothCache.get(points);
+  if (d === undefined) smoothCache.set(points, (d = smoothD(points)));
+  return d;
+}
+const pathCache = new WeakMap<[number, number][], { closed: boolean; d: string }>();
+function cachedPathD(points: [number, number][], closed?: boolean): string {
+  const hit = pathCache.get(points);
+  if (hit && hit.closed === !!closed) return hit.d;
+  const d = pathD(points, closed);
+  pathCache.set(points, { closed: !!closed, d });
+  return d;
 }
 
 /** Upload id an element draws from: an uploaded image, or a brush texture from My files. */
@@ -167,6 +321,8 @@ interface ElProps {
   /** Uploaded image, or the brush texture when it comes from My files. */
   uploadUrl?: string;
   pending?: boolean;
+  /** Built-in asset as a cached SVG image (see lib/client/assetImages). */
+  asImage?: boolean;
 }
 
 export function elementTransform(el: MapElement): string {
@@ -180,7 +336,7 @@ export function elementTransform(el: MapElement): string {
   return t;
 }
 
-export const ElementView = memo(function ElementView({ el, idPrefix = "m", interactive, inert, asset, pattern, uploadUrl, pending }: ElProps) {
+export const ElementView = memo(function ElementView({ el, idPrefix = "m", interactive, inert, asset, pattern, uploadUrl, pending, asImage }: ElProps) {
   const w = el.width;
   const h = el.height;
   let content: React.ReactNode = null;
@@ -190,7 +346,11 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
       if (uploadUrl) {
         content = <image href={uploadUrl} x={0} y={0} width={w} height={h} preserveAspectRatio="none" />;
       } else if (asset) {
-        content = (
+        const tint = el.tint ?? asset.defaultTint ?? "#444444";
+        const img = asImage ? assetImage(asset, tint) : null;
+        content = img ? (
+          <image href={img.url} x={img.x * w} y={img.y * h} width={img.w * w} height={img.h * h} preserveAspectRatio="none" />
+        ) : (
           <svg
             x={0}
             y={0}
@@ -199,7 +359,7 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
             viewBox={asset.viewBox}
             preserveAspectRatio="none"
             overflow="visible"
-            style={{ color: el.tint ?? asset.defaultTint ?? "#444444" }}
+            style={{ color: tint }}
             dangerouslySetInnerHTML={{ __html: asset.body }}
           />
         );
@@ -268,11 +428,12 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
       break;
     }
     case "path": {
-      const d = pathD(el.points, el.closed);
+      const d = cachedPathD(el.points, el.closed);
       content = (
         <>
           <path
             d={d}
+            pointerEvents={interactive ? "none" : undefined}
             fill={el.closed && el.fill ? el.fill : "none"}
             stroke={el.stroke}
             strokeWidth={el.strokeWidth}
@@ -287,7 +448,7 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
       break;
     }
     case "brush":
-      content = <BrushView el={el} uid={`${idPrefix}-${el.id}`} pattern={pattern} textureUrl={uploadUrl} interactive={interactive} />;
+      content = <BrushView el={el} uid={`${idPrefix}-${el.id}`} idPrefix={idPrefix} pattern={pattern} textureUrl={uploadUrl} interactive={interactive} />;
       break;
   }
 
@@ -298,8 +459,15 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
       data-el={interactive ? el.id : undefined}
       pointerEvents={interactive && inert ? "none" : undefined}
     >
-      {content}
-      {interactive && el.type !== "path" && el.type !== "brush" && <rect width={w} height={h} fill="transparent" />}
+      {interactive && el.type !== "path" && el.type !== "brush" ? (
+        <>
+          {/* Hit testing only looks at the plain box, never inside the drawing (much cheaper). */}
+          <g pointerEvents="none">{content}</g>
+          <rect width={w} height={h} fill="transparent" />
+        </>
+      ) : (
+        content
+      )}
     </g>
   );
 });
@@ -313,12 +481,14 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
 function BrushView({
   el,
   uid,
+  idPrefix,
   pattern,
   textureUrl,
   interactive,
 }: {
   el: BrushElement;
   uid: string;
+  idPrefix: string;
   pattern?: PatternDef;
   textureUrl?: string;
   interactive?: boolean;
@@ -330,20 +500,30 @@ function BrushView({
   const edge = el.edge && el.edgeWidth ? el.edgeWidth : 0;
   const ts = el.textureSize || 70;
   const hasTexture = !!el.texture && (!!pattern || !!textureUrl);
-  const paths = el.ops.map((o) => smoothD(o.points));
-  const round3 = { fill: "none", strokeLinecap: "round", strokeLinejoin: "round" } as const;
+  const paths = el.ops.map((o) => cachedSmoothD(o.points));
+  // Only the hit paths take part in hit testing - stroked curves are expensive to test.
+  const round3 = { fill: "none", strokeLinecap: "round", strokeLinejoin: "round", pointerEvents: interactive ? "none" : undefined } as const;
 
-  const texture = hasTexture && (
-    <pattern id={`${uid}-p`} patternUnits="userSpaceOnUse" width={ts} height={ts} patternTransform={`translate(${round(-el.x)} ${round(-el.y)})`}>
-      {pattern ? (
-        <svg width={ts} height={ts} viewBox={`0 0 ${pattern.size} ${pattern.size}`} preserveAspectRatio="none" dangerouslySetInnerHTML={{ __html: pattern.body }} />
-      ) : (
+  // Library textures: the drawing lives once per map in a shared template (<TextureDefs>);
+  // each stroke only adds a tiny pattern that re-uses it, anchored to the map.
+  const texture =
+    hasTexture &&
+    (pattern ? (
+      <pattern
+        id={`${uid}-p`}
+        href={`#${textureTemplateId(idPrefix, pattern.id)}`}
+        patternUnits="userSpaceOnUse"
+        width={pattern.size}
+        height={pattern.size}
+        patternTransform={`translate(${round(-el.x)} ${round(-el.y)}) scale(${ts / pattern.size})`}
+      />
+    ) : (
+      <pattern id={`${uid}-p`} patternUnits="userSpaceOnUse" width={ts} height={ts} patternTransform={`translate(${round(-el.x)} ${round(-el.y)})`}>
         <image href={textureUrl} width={ts} height={ts} preserveAspectRatio="xMidYMid slice" />
-      )}
-    </pattern>
-  );
+      </pattern>
+    ));
   const hit = interactive && (
-    <g {...round3} stroke="transparent">
+    <g {...round3} stroke="transparent" pointerEvents={undefined}>
       {el.ops.map((o, i) => (o.erase ? null : <path key={i} d={paths[i]} strokeWidth={Math.max(o.size + edge * 2, 12)} />))}
     </g>
   );
@@ -413,9 +593,11 @@ function BrushView({
         )}
         {texture}
       </defs>
-      {edge > 0 && <rect width={w} height={h} fill={el.edge!} mask={`url(#${uid}-e)`} />}
-      <rect width={w} height={h} fill={el.color} mask={`url(#${uid}-m)`} />
-      {texture && <rect width={w} height={h} fill={`url(#${uid}-p)`} mask={`url(#${uid}-m)`} />}
+      <g pointerEvents={interactive ? "none" : undefined}>
+        {edge > 0 && <rect width={w} height={h} fill={el.edge!} mask={`url(#${uid}-e)`} />}
+        <rect width={w} height={h} fill={el.color} mask={`url(#${uid}-m)`} />
+        {texture && <rect width={w} height={h} fill={`url(#${uid}-p)`} mask={`url(#${uid}-m)`} />}
+      </g>
       {hit}
     </>
   );

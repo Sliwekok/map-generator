@@ -50,14 +50,16 @@ src/
     editor/[id]           editor page
   components/
     editor/               canvas, toolbar, panels, dialogs, BrushPanel.tsx (brush / eraser settings)
-    map/MapRenderer.tsx   single SVG renderer used by editor, thumbnails, home demo and export
+    map/MapRenderer.tsx   SVG renderer (background, one memoised group per layer, grid) used by the editor,
+                          thumbnails, home demo and export
   lib/
     assets/importer.ts    the one asset importer (scans + validates assets/)
     assets/access.ts      access level -> who may use a group
     server/assets.ts      cached registry, per-user library, dev hot reload
     editor/               zustand store, geometry, autosave & shortcuts hooks, export,
                           brush.ts (painting: passes, merging, erasing, smoothing), brushStore.ts (brush settings)
-    client/               API client, IndexedDB storage, file store (uploads.ts), session
+    client/               API client, IndexedDB storage, file store (uploads.ts), session,
+                          assetImages.ts (built-in assets as cached SVG images in the editor)
     files: components/files/FileBrowser.tsx (shared browser) + FileDialogs.tsx (name / move dialogs)
     server/               db connection, models, auth, http helpers,
                           files.ts (folders, quotas, extraction, move, delete), archive.ts (zip/tar/tgz reader)
@@ -69,3 +71,13 @@ src/
 ```
 
 Adding assets: drop SVG files into `assets/<group>/<category>/` and (optionally) describe them in that group's `group.json`; new groups are new folders. Access (free / logged-in), order and visibility are set per group. Full format: [`assets/README.md`](assets/README.md). Validate with `npm run assets:check` (also runs before `npm run build`).
+
+## Editor rendering performance
+
+- Every layer (background, terrain, objects, tokens, labels, grid) is its own SVG on its own GPU layer, memoised on that layer's elements. Editing one layer doesn't re-render or repaint the others.
+- Panning only moves the drawn map (CSS transform). While the wheel zooms, the drawn map is just scaled; it is redrawn sharp ~160 ms after the wheel pauses.
+- Dragged items move on a separate floating layer and are written to the map once, on release.
+- In the editor, built-in assets are drawn as SVG images (one node per copy instead of hundreds); exports, thumbnails and the home page keep inline SVG.
+- Brush textures from the library are defined once per map as pattern templates and re-used by every stroke.
+- Only invisible hit areas take part in hit testing; the drawings themselves have `pointer-events: none`.
+
