@@ -258,6 +258,7 @@ const pl: Dict = {
     props: {
       nothing: "Nic nie zaznaczono. Kliknij element, Ctrl+klik aby wybrać kilka, lub przeciągnij ramkę na pustym miejscu.",
       selected: "Zaznaczono: {n}",
+      name: "Nazwa",
       position: "Pozycja",
       size: "Rozmiar",
       rotation: "Obrót",
@@ -322,6 +323,7 @@ const pl: Dict = {
       deleteItem: "Usuń element",
       lockedItem: "Element lub warstwa jest zablokowana",
       hiddenLayer: "Warstwa jest ukryta",
+      renameHint: "Enter zapisuje, Esc anuluje. Zostaw puste, aby wrócić do domyślnej nazwy.",
       types: {
         asset: "Obiekt",
         image: "Obraz",
@@ -373,6 +375,8 @@ const pl: Dict = {
       copy: "Kopiuj",
       pasteHere: "Wklej tutaj",
       editText: "Edytuj tekst",
+      rename: "Zmień nazwę",
+      resetName: "Przywróć domyślną nazwę",
       layer: "Przenieś na warstwę",
       transform: "Przekształć",
       rotL: "Obróć o 90° w lewo",

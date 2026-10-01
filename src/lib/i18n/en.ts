@@ -256,6 +256,7 @@ const en = {
     props: {
       nothing: "Nothing selected. Click an item, Ctrl+click to pick several, or drag a box on empty space.",
       selected: "{n} selected",
+      name: "Name",
       position: "Position",
       size: "Size",
       rotation: "Rotation",
@@ -320,6 +321,7 @@ const en = {
       deleteItem: "Delete item",
       lockedItem: "Item or layer is locked",
       hiddenLayer: "Layer is hidden",
+      renameHint: "Enter saves, Esc cancels. Leave empty to use the default name.",
       types: {
         asset: "Asset",
         image: "Image",
@@ -371,6 +373,8 @@ const en = {
       copy: "Copy",
       pasteHere: "Paste here",
       editText: "Edit text",
+      rename: "Rename",
+      resetName: "Restore default name",
       layer: "Move to layer",
       transform: "Transform",
       rotL: "Rotate 90° left",

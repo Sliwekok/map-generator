@@ -39,6 +39,8 @@ interface ElementBase {
   locked?: boolean;
   flipX?: boolean;
   flipY?: boolean;
+  /** Name given by the user (item list, context menu). Missing = default name from the asset / type. */
+  name?: string;
 }
 
 export interface AssetElement extends ElementBase {

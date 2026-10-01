@@ -169,6 +169,7 @@ export const HELP_EN: HelpSection[] = [
     blocks: [
       "Every item belongs to one of five layers, drawn from bottom to top: Background, Terrain, Objects, Tokens and Labels. Use the eye icon to hide a layer and the lock icon to protect it from accidental changes — locked layers can't be selected on the canvas, so you can draw selection boxes over them freely.",
       "Change an item's layer in the Properties panel. Individual items can be locked too (key L); unlock them via “Select all on layer” or the Unlock button shown in map properties.",
+      "Give items your own names (e.g. “Secret door”, “Boss lair”): double-click an item on the map or in “All items”, right-click it and choose “Rename”, press F2, or type in the Name field of the Properties panel. Clear the name to go back to the default one. Names are only shown in the editor, never on the exported image.",
     ],
   },
   {
@@ -242,6 +243,7 @@ export const HELP_EN: HelpSection[] = [
           ["Q / E (Shift)", "Rotate −15° / +15° (90°)"],
           ["PgUp / PgDn / Home / End", "Forward / backward / to back / to front"],
           ["L", "Lock / unlock selection"],
+          ["F2, double-click", "Rename the selected item (double-click on text edits the text)"],
           ["G / S", "Toggle grid / snapping"],
           ["Alt (while dragging)", "Temporarily disable snapping"],
           ["Space + drag, middle mouse", "Pan"],
@@ -424,6 +426,7 @@ export const HELP_PL: HelpSection[] = [
     blocks: [
       "Każdy element należy do jednej z pięciu warstw, rysowanych od dołu: Tło, Teren, Obiekty, Żetony i Napisy. Ikoną oka ukryjesz warstwę, a kłódką zabezpieczysz ją przed przypadkową zmianą — zablokowanych warstw nie da się zaznaczyć na płótnie, więc można swobodnie rysować nad nimi ramkę zaznaczenia.",
       "Warstwę elementu zmienisz w panelu Właściwości. Pojedyncze elementy też można blokować (klawisz L); odblokujesz je przez „Zaznacz wszystko na warstwie” lub przycisk Odblokuj we właściwościach mapy.",
+      "Elementom możesz nadawać własne nazwy (np. „Tajne drzwi”, „Leże bossa”): kliknij element dwukrotnie na mapie lub na liście „Wszystkie elementy”, kliknij go prawym przyciskiem i wybierz „Zmień nazwę”, naciśnij F2 albo wpisz nazwę w polu Nazwa w panelu Właściwości. Wyczyść nazwę, aby wrócić do domyślnej. Nazwy widać tylko w edytorze, nigdy na eksportowanym obrazie.",
     ],
   },
   {
@@ -497,6 +500,7 @@ export const HELP_PL: HelpSection[] = [
           ["Q / E (Shift)", "Obróć −15° / +15° (90°)"],
           ["PgUp / PgDn / Home / End", "Do przodu / do tyłu / na spód / na wierzch"],
           ["L", "Zablokuj / odblokuj zaznaczenie"],
+          ["F2, dwuklik", "Zmień nazwę zaznaczonego elementu (dwuklik na napisie edytuje tekst)"],
           ["G / S", "Siatka / przyciąganie"],
           ["Alt (podczas przeciągania)", "Chwilowo wyłącz przyciąganie"],
           ["Spacja + przeciągnij, środkowy przycisk", "Przesuwanie widoku"],

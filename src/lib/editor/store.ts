@@ -15,6 +15,7 @@ import {
 } from "./geometry";
 import { relayoutText } from "./text";
 import { contentOf } from "@/lib/client/repo";
+import { cleanItemName } from "@/lib/itemName";
 
 export type Tool = "select" | "pan" | "text" | "rect" | "ellipse" | "pen" | "brush" | "eraser" | "measure";
 export type SaveState = "saved" | "saving" | "pending" | "error" | "offline" | "conflict";
@@ -66,6 +67,8 @@ interface EditorState {
 
   addElements: (els: MapElement[], select?: boolean) => void;
   updateElements: (ids: string[], fn: (el: MapElement) => MapElement, opts?: { history?: boolean }) => void;
+  /** Sets (or with an empty name, clears) the user-given name of one item. Allowed on locked items too. */
+  renameElement: (id: string, name: string) => void;
   deleteSelection: () => void;
   deleteElements: (ids: string[]) => void;
   duplicateSelection: () => void;
@@ -232,6 +235,15 @@ export const useEditor = create<EditorState>((set, get) => {
         { ...doc, elements: doc.elements.map((e) => (set_.has(e.id) ? fn(e) : e)) },
         opts?.history !== false,
       );
+    },
+
+    renameElement(id, raw) {
+      const doc = get().doc;
+      if (!doc) return;
+      const name = cleanItemName(raw);
+      const el = doc.elements.find((e) => e.id === id);
+      if (!el || (el.name || undefined) === name) return;
+      commit({ ...doc, elements: doc.elements.map((e) => (e.id === id ? { ...e, name } : e)) });
     },
 
     deleteSelection() {

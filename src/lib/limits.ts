@@ -38,6 +38,8 @@ export const LIMITS = {
     maxSize: 16384,
     maxElements: 5000,
     maxNameLength: 80,
+    /** Name of one item on the map (set by renaming it). */
+    maxItemNameLength: 60,
     maxPayloadBytes: 4 * 1024 * 1024,
   },
   brush: {

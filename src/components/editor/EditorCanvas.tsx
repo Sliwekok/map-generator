@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ElementPreview, MapRenderer } from "@/components/map/MapRenderer";
+import { requestRename } from "@/lib/editor/itemLabel";
 import { useEditor, makeText, type View } from "@/lib/editor/store";
 import {
   aabb,
@@ -654,14 +655,18 @@ export default function EditorCanvas() {
 
   const onDoubleClick = (e: React.MouseEvent) => {
     const s = useEditor.getState();
-    const node = (e.target as Element).closest("[data-el]");
-    if (!node || !s.doc) return;
-    const id = node.getAttribute("data-el")!;
-    const el = s.doc.elements.find((x) => x.id === id);
-    if (el?.type === "text") {
-      s.select([id]);
-      s.setEditingText(id);
-    }
+    if (!s.doc || s.tool !== "select" || s.editingTextId) return;
+    // Pointer capture retargets the event to the canvas, so look up the item under the cursor.
+    const node =
+      (e.target as Element).closest("[data-el]") ??
+      document.elementsFromPoint(e.clientX, e.clientY).find((n) => n.closest("[data-el]"))?.closest("[data-el]");
+    const id = node?.getAttribute("data-el");
+    const el = id ? s.doc.elements.find((x) => x.id === id) : undefined;
+    if (!el) return;
+    s.select([el.id]);
+    if (el.type === "text") s.setEditingText(el.id);
+    // Any other item: rename it in the item list.
+    else requestRename(el.id);
   };
 
   // ---- right-click menu

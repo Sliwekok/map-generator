@@ -9,6 +9,7 @@ import {
   type MapElement,
 } from "./types";
 import { DEFAULT_GRID_SIZE, LIMITS } from "./limits";
+import { cleanItemName } from "./itemName";
 
 export function defaultLayers(): LayerState[] {
   return LAYER_ORDER.map((id) => ({ id, visible: true, locked: false }));
@@ -87,6 +88,7 @@ function sanitizeElement(raw: unknown): MapElement | null {
     locked: r.locked === true || undefined,
     flipX: r.flipX === true || undefined,
     flipY: r.flipY === true || undefined,
+    name: cleanItemName(r.name),
   };
   switch (r.type) {
     case "asset": {

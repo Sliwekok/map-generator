@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { saveMap } from "@/lib/client/repo";
+import { requestRename } from "./itemLabel";
 import { useEditor } from "./store";
 import { useBrush } from "./brushStore";
 
@@ -133,6 +134,12 @@ export function useShortcuts() {
       }
 
       switch (e.key) {
+        case "F2":
+          if (s.selection.length === 1) {
+            e.preventDefault();
+            requestRename(s.selection[0]);
+          }
+          break;
         case "Delete":
         case "Backspace":
           s.deleteSelection();

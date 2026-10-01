@@ -1,10 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n, type TKey } from "@/lib/i18n";
 import { useEditor } from "@/lib/editor/store";
 import { useAssets } from "@/lib/client/assets";
-import { useUploads } from "@/lib/client/uploads";
 import { aabb, scaleBrushContent, unionBox } from "@/lib/editor/geometry";
 import { snapBox } from "@/lib/editor/factory";
 import { relayoutText } from "@/lib/editor/text";
@@ -12,6 +11,9 @@ import { LAYER_ORDER, type LayerId, type MapElement, type TextElement } from "@/
 import { Icon } from "@/components/ui/Icon";
 import { Button, ColorField, cx, IconButton, Label, NumberField, Segmented, Slider } from "@/components/ui/controls";
 import { BrushProps, BrushToolPanel } from "./BrushPanel";
+import { PopupMenu, type MenuItem } from "./ContextMenu";
+import { RENAME_EVENT, useItemLabel } from "@/lib/editor/itemLabel";
+import { LIMITS } from "@/lib/limits";
 
 export default function RightPanel() {
   const { t } = useI18n();
@@ -76,6 +78,9 @@ function Properties() {
 
       {single ? (
         <>
+          <Section title={t("editor.props.name")}>
+            <NameField key={single.id} el={single} />
+          </Section>
           <Section title={t("editor.props.position")}>
             <div className="grid grid-cols-2 gap-2">
               <NumberField label="X" value={single.x} onChange={(v) => upd((e) => ({ ...e, x: v }))} />
@@ -196,6 +201,50 @@ function Properties() {
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Item name in the Properties panel: saved on Enter / blur, Esc reverts, empty = default name. */
+function NameField({ el }: { el: MapElement }) {
+  const { t } = useI18n();
+  const labelOf = useItemLabel();
+  const { defaultName } = labelOf(el);
+  const [value, setValue] = useState(el.name ?? "");
+  const [synced, setSynced] = useState(el.name);
+  // Follow renames made elsewhere (item list, undo) while the field isn't being edited.
+  if (synced !== el.name) {
+    setSynced(el.name);
+    setValue(el.name ?? "");
+  }
+  const cancelled = useRef(false);
+  const save = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
+    useEditor.getState().renameElement(el.id, value);
+  };
+  return (
+    <input
+      data-testid="item-name"
+      value={value}
+      placeholder={defaultName}
+      maxLength={LIMITS.map.maxItemNameLength}
+      title={t("editor.layers.renameHint")}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          save();
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          cancelled.current = true;
+          setValue(el.name ?? "");
+          e.currentTarget.blur();
+        }
+      }}
+      className="w-full rounded-md bg-slate-800 px-2 py-1.5 text-sm text-slate-100 ring-1 ring-slate-700 placeholder:text-slate-500 focus:outline-none focus:ring-amber-500/70"
+    />
   );
 }
 
@@ -469,34 +518,81 @@ function Layers() {
 
 const TYPE_ICON: Record<string, string> = { asset: "image", image: "image", rect: "rect", ellipse: "ellipse", path: "pen", brush: "brush", text: "text" };
 
-/** Collapsible list of every element on the map: click selects (and centers), trash deletes. */
+/** Collapsible list of every element on the map: click selects (and centers), double-click / F2 / right-click renames, trash deletes. */
 function ItemList() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const doc = useEditor((s) => s.doc);
   const selection = useEditor((s) => s.selection);
-  const assets = useAssets((s) => s.byId);
-  const uploads = useUploads((s) => s.byId);
+  const labelOf = useItemLabel();
   const [open, setOpen] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // "Rename" from the canvas (double-click, context menu, F2) opens the list on that item.
+  useEffect(() => {
+    const onRename = (ev: Event) => {
+      const id = (ev as CustomEvent<{ id: string }>).detail?.id;
+      if (!id || !useEditor.getState().doc?.elements.some((e) => e.id === id)) return;
+      setMenu(null);
+      setOpen(true);
+      setRenaming(id);
+    };
+    window.addEventListener(RENAME_EVENT, onRename);
+    return () => window.removeEventListener(RENAME_EVENT, onRename);
+  }, []);
+
+  useEffect(() => {
+    if (renaming) listRef.current?.querySelector(`[data-item="${CSS.escape(renaming)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [renaming, open]);
+
   if (!doc) return null;
   const s = useEditor.getState;
   const sel = new Set(selection);
 
-  const labelOf = (e: MapElement): { kind: string; name: string } => {
-    if (e.type === "asset") {
-      if (e.assetId.startsWith("u:")) return { kind: "image", name: uploads[e.assetId.slice(2)]?.name ?? t("editor.layers.types.image") };
-      return { kind: "asset", name: assets[e.assetId]?.name[lang] ?? t("editor.layers.types.asset") };
-    }
-    if (e.type === "text") return { kind: "text", name: e.text.replace(/\s+/g, " ").trim() || t("editor.layers.types.text") };
-    return { kind: e.type, name: t(`editor.layers.types.${e.type}` as TKey) };
-  };
-
-  const onPick = (ev: React.MouseEvent, id: string) => {
+  const onPick = (ev: React.MouseEvent, id: string, hidden: boolean) => {
+    if (hidden) return;
     if (ev.ctrlKey || ev.metaKey || ev.shiftKey) {
       s().toggleSelect(id);
       return;
     }
+    // The second click of a double-click only starts renaming.
+    if (ev.detail > 1) return;
     s().select([id]);
     window.dispatchEvent(new CustomEvent("mapforge:focus", { detail: { id } }));
+  };
+
+  const onMenu = (ev: React.MouseEvent, id: string, hidden: boolean) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!hidden && !s().selection.includes(id)) s().select([id]);
+    setMenu({ id, x: ev.clientX, y: ev.clientY });
+  };
+
+  const menuItems = (): MenuItem[] => {
+    const el = menu && doc.elements.find((e) => e.id === menu.id);
+    if (!el) return [];
+    const layer = doc.layers.find((l) => l.id === el.layer)!;
+    const locked = !!el.locked || layer.locked;
+    return [
+      { kind: "label", text: labelOf(el).name },
+      { kind: "action", label: t("editor.ctx.rename"), icon: "pencil", hint: "F2", run: () => setRenaming(el.id) },
+      {
+        kind: "action",
+        label: t("editor.ctx.resetName"),
+        icon: "undo",
+        disabled: !el.name,
+        run: () => s().renameElement(el.id, ""),
+      },
+      { kind: "sep" },
+      {
+        kind: "action",
+        label: el.locked ? t("editor.props.unlock") : t("editor.props.lock"),
+        icon: el.locked ? "unlock" : "lock",
+        run: () => s().updateElements([el.id], (e) => ({ ...e, locked: e.locked ? undefined : true })),
+      },
+      { kind: "action", label: t("editor.layers.deleteItem"), icon: "trash", danger: true, disabled: locked, run: () => s().deleteElements([el.id]) },
+    ];
   };
 
   // Top layer first; inside a layer, top-most (last drawn) element first.
@@ -519,7 +615,7 @@ function ItemList() {
         <Icon name="chevronDown" size={15} className={cx("transition-transform", open && "rotate-180")} />
       </button>
       {open && (
-        <div className="mt-1 max-h-64 overflow-y-auto rounded-md bg-slate-950/40 p-1 ring-1 ring-slate-800">
+        <div ref={listRef} data-testid="item-list" className="mt-1 max-h-64 overflow-y-auto rounded-md bg-slate-950/40 p-1 ring-1 ring-slate-800">
           {!doc.elements.length && <p className="px-2 py-3 text-center text-xs text-slate-500">{t("editor.layers.noItems")}</p>}
           {groups.map(({ layer, items }) =>
             items.length ? (
@@ -529,39 +625,66 @@ function ItemList() {
                 </div>
                 <ul>
                   {items.map((e) => {
-                    const { kind, name } = labelOf(e);
+                    const label = labelOf(e);
                     const locked = !!e.locked || layer.locked;
                     const hidden = !layer.visible;
                     const active = sel.has(e.id);
                     return (
                       <li
                         key={e.id}
+                        data-item={e.id}
+                        onContextMenu={(ev) => onMenu(ev, e.id, hidden)}
                         className={cx("group flex items-center gap-1 rounded px-1", active ? "bg-amber-500/20 ring-1 ring-amber-500/60" : "hover:bg-slate-800")}
                       >
-                        <button
-                          disabled={hidden}
-                          title={hidden ? t("editor.layers.hiddenLayer") : t("editor.layers.selectItem")}
-                          onClick={(ev) => onPick(ev, e.id)}
-                          className={cx(
-                            "flex min-w-0 flex-1 items-center gap-2 py-1 text-left text-xs",
-                            hidden ? "cursor-not-allowed text-slate-600" : active ? "text-amber-200" : "text-slate-300",
-                          )}
-                        >
-                          <Icon name={TYPE_ICON[kind]} size={14} className="shrink-0 text-slate-500" />
-                          <span className="truncate">{name}</span>
-                          {e.locked && <Icon name="lock" size={12} className="shrink-0 text-slate-500" />}
-                        </button>
-                        <button
-                          disabled={locked}
-                          title={locked ? t("editor.layers.lockedItem") : t("editor.layers.deleteItem")}
-                          onClick={() => s().deleteElements([e.id])}
-                          className={cx(
-                            "flex h-6 w-6 shrink-0 items-center justify-center rounded",
-                            locked ? "cursor-not-allowed text-slate-700" : "text-slate-500 hover:bg-red-500/20 hover:text-red-400",
-                          )}
-                        >
-                          <Icon name="trash" size={13} />
-                        </button>
+                        {renaming === e.id ? (
+                          <RenameField
+                            icon={TYPE_ICON[label.kind]}
+                            initial={e.name ?? ""}
+                            placeholder={label.defaultName}
+                            onDone={(name) => {
+                              setRenaming(null);
+                              if (name !== null) s().renameElement(e.id, name);
+                            }}
+                          />
+                        ) : (
+                          <button
+                            aria-disabled={hidden || undefined}
+                            title={`${label.custom ? `${label.defaultName} · ` : ""}${hidden ? t("editor.layers.hiddenLayer") : t("editor.layers.selectItem")}`}
+                            onClick={(ev) => onPick(ev, e.id, hidden)}
+                            onDoubleClick={(ev) => {
+                              if (ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+                              setRenaming(e.id);
+                            }}
+                            onKeyDown={(ev) => {
+                              if (ev.key === "F2") {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                setRenaming(e.id);
+                              }
+                            }}
+                            className={cx(
+                              "flex min-w-0 flex-1 items-center gap-2 py-1 text-left text-xs",
+                              hidden ? "cursor-not-allowed text-slate-600" : active ? "text-amber-200" : "text-slate-300",
+                            )}
+                          >
+                            <Icon name={TYPE_ICON[label.kind]} size={14} className="shrink-0 text-slate-500" />
+                            <span className={cx("truncate", label.custom && "font-medium")}>{label.name}</span>
+                            {e.locked && <Icon name="lock" size={12} className="shrink-0 text-slate-500" />}
+                          </button>
+                        )}
+                        {renaming !== e.id && (
+                          <button
+                            disabled={locked}
+                            title={locked ? t("editor.layers.lockedItem") : t("editor.layers.deleteItem")}
+                            onClick={() => s().deleteElements([e.id])}
+                            className={cx(
+                              "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+                              locked ? "cursor-not-allowed text-slate-700" : "text-slate-500 hover:bg-red-500/20 hover:text-red-400",
+                            )}
+                          >
+                            <Icon name="trash" size={13} />
+                          </button>
+                        )}
                       </li>
                     );
                   })}
@@ -571,6 +694,63 @@ function ItemList() {
           )}
         </div>
       )}
+      {menu && <PopupMenu items={menuItems()} x={menu.x} y={menu.y} onClose={() => setMenu(null)} testId="item-menu" />}
+    </div>
+  );
+}
+
+/** Inline name editor: Enter / click outside saves, Esc cancels, an empty name restores the default one. */
+function RenameField({
+  icon,
+  initial,
+  placeholder,
+  onDone,
+}: {
+  icon: string;
+  initial: string;
+  placeholder: string;
+  onDone: (name: string | null) => void;
+}) {
+  const { t } = useI18n();
+  const ref = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const [value, setValue] = useState(initial || placeholder);
+  const finish = (name: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(name === null ? null : name.trim() === placeholder.trim() && !initial ? "" : name);
+  };
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2 py-0.5">
+      <Icon name={icon} size={14} className="shrink-0 text-slate-500" />
+      <input
+        ref={ref}
+        data-testid="rename-item"
+        aria-label={t("editor.ctx.rename")}
+        title={t("editor.layers.renameHint")}
+        value={value}
+        placeholder={placeholder}
+        maxLength={LIMITS.map.maxItemNameLength}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            finish(value);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            finish(null);
+          }
+        }}
+        onBlur={() => finish(value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+        className="min-w-0 flex-1 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-100 outline-none ring-1 ring-amber-500/70"
+      />
     </div>
   );
 }

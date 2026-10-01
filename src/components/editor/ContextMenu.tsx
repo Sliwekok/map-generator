@@ -10,6 +10,7 @@ import { LAYER_ORDER, type LayerId, type MapContent, type MapElement } from "@/l
 import { Icon } from "@/components/ui/Icon";
 import { cx } from "@/components/ui/controls";
 import type { Pt } from "@/lib/editor/geometry";
+import { requestRename, useItemLabel } from "@/lib/editor/itemLabel";
 
 export interface ContextMenuState {
   /** Viewport (client) coordinates where the menu opens. */
@@ -19,6 +20,7 @@ export interface ContextMenuState {
   world: Pt;
 }
 
+export type MenuItem = Item;
 type Item =
   | { kind: "sep" }
   | { kind: "label"; text: string }
@@ -49,6 +51,7 @@ export default function ContextMenu({ menu, onClose }: { menu: ContextMenuState;
   const clipboard = useEditor((s) => s.clipboard);
   const showGrid = useEditor((s) => s.showGrid);
   const snap = useEditor((s) => s.snap);
+  const labelOf = useItemLabel();
 
   const items = useMemo<Item[]>(() => {
     const s = useEditor.getState;
@@ -94,7 +97,7 @@ export default function ContextMenu({ menu, onClose }: { menu: ContextMenuState;
     const out: Item[] = [];
     out.push({
       kind: "label",
-      text: single ? describe(single, t) : t("editor.props.selected", { n: els.length }),
+      text: single ? shorten(labelOf(single).name) : t("editor.props.selected", { n: els.length }),
     });
     if (noEdit) out.push({ kind: "label", text: t(layerLocked && !allLocked ? "editor.ctx.layerLocked" : "editor.ctx.locked") });
 
@@ -116,6 +119,15 @@ export default function ContextMenu({ menu, onClose }: { menu: ContextMenuState;
       { kind: "sep" },
     );
 
+    if (single) {
+      out.push({
+        kind: "action",
+        label: t("editor.ctx.rename"),
+        icon: "pencil",
+        hint: "F2",
+        run: () => requestRename(single.id),
+      });
+    }
     if (single?.type === "text") {
       out.push({
         kind: "action",
@@ -206,8 +218,14 @@ export default function ContextMenu({ menu, onClose }: { menu: ContextMenuState;
       { kind: "action", label: t("common.delete"), icon: "trash", hint: "Del", danger: true, disabled: noEdit, run: () => s().deleteSelection() },
     );
     return out;
-  }, [doc, selection, clipboard, showGrid, snap, menu.world, t]);
+  }, [doc, selection, clipboard, showGrid, snap, menu.world, t, labelOf]);
 
+  if (!doc) return null;
+  return <PopupMenu items={items} x={menu.x} y={menu.y} onClose={onClose} testId="context-menu" />;
+}
+
+/** A menu at viewport coordinates (rendered in a portal) that closes itself on outside click, Escape, scroll, resize or blur. */
+export function PopupMenu({ items, x, y, onClose, testId }: { items: Item[]; x: number; y: number; onClose: () => void; testId?: string }) {
   // Close on outside click, Escape, scroll/zoom, resize or window blur.
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
@@ -237,23 +255,13 @@ export default function ContextMenu({ menu, onClose }: { menu: ContextMenuState;
     };
   }, [onClose]);
 
-  if (!doc || typeof document === "undefined") return null;
-  return createPortal(
-    <MenuList items={items} x={menu.x} y={menu.y} onClose={onClose} autoFocus testId="context-menu" />,
-    document.body,
-  );
+  if (typeof document === "undefined") return null;
+  return createPortal(<MenuList items={items} x={x} y={y} onClose={onClose} autoFocus testId={testId} />, document.body);
 }
 
 const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
-function describe(el: MapElement, t: ReturnType<typeof useI18n>["t"]): string {
-  if (el.type === "text") {
-    const s = el.text.replace(/\s+/g, " ").trim();
-    return s.length > 28 ? `${s.slice(0, 27)}…` : s || t("editor.layers.types.text");
-  }
-  if (el.type === "asset") return t(el.assetId.startsWith("u:") ? "editor.layers.types.image" : "editor.layers.types.asset");
-  return t(`editor.layers.types.${el.type}` as TKey);
-}
+const shorten = (s: string) => (s.length > 28 ? `${s.slice(0, 27)}…` : s);
 
 function MenuList({
   items,
