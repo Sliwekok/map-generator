@@ -1,5 +1,7 @@
 import {
+  BRUSH_LINES,
   LAYER_ORDER,
+  type BrushElement,
   type BackgroundSettings,
   type BrushOp,
   type GraphicMask,
@@ -167,6 +169,9 @@ function sanitizeElement(raw: unknown): MapElement | null {
       if (!ops.some((o) => !o.erase)) return null;
       const texture = typeof r.texture === "string" && ID_RE.test(r.texture) ? r.texture : null;
       const edge = r.edge ? color(r.edge, "#3b2f23") : null;
+      const line = BRUSH_LINES.includes(r.line as never) && r.line !== "solid" ? (r.line as BrushElement["line"]) : undefined;
+      const spacing = num(r.spacing, 0.25, 4, 1);
+      const rough = line ? 0 : num(r.rough, 0, 1, 0);
       return {
         ...base,
         type: "brush",
@@ -177,6 +182,11 @@ function sanitizeElement(raw: unknown): MapElement | null {
         softness: num(r.softness, 0, 1, 0) || undefined,
         edge,
         edgeWidth: edge ? num(r.edgeWidth, 0.5, 500, 4) : undefined,
+        ...(line ? { line } : {}),
+        ...(line && spacing !== 1 ? { spacing } : {}),
+        ...(line && r.accent ? { accent: color(r.accent, "#4a3826") } : {}),
+        ...(rough > 0 ? { rough } : {}),
+        ...(line === "cliff" && r.flipSide === true ? { flipSide: true as const } : {}),
       };
     }
     default:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ElementPreview, MapBackground, MapGrid, MapLayer, TextureDefs, elementsByLayer, layerStates, texturesUsed } from "@/components/map/MapRenderer";
+import { ElementPreview, ElementView, MapBackground, MapGrid, MapLayer, TextureDefs, elementsByLayer, layerStates, texturesUsed } from "@/components/map/MapRenderer";
 import { requestRename } from "@/lib/editor/itemLabel";
 import { useEditor, makeText, type View } from "@/lib/editor/store";
 import {
@@ -24,7 +24,8 @@ import {
 import { assetElement, pathElement, shapeElement, snapBox, uploadElement } from "@/lib/editor/factory";
 import { relayoutText, FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { uploadFiles } from "@/lib/editor/actions";
-import { addPass, brushElement, brushPx, erasePass, fullyErased, mergeTarget, smoothStroke, styleFrom, type BrushStyle } from "@/lib/editor/brush";
+import { addPass, brushElement, brushPx, erasePass, fullyErased, mergeTarget, ringPx, smoothStroke, styleFrom, type BrushStyle } from "@/lib/editor/brush";
+import { newSeed, scatterStamps } from "@/lib/editor/scatter";
 import { useBrush } from "@/lib/editor/brushStore";
 import { eraserTargets, maskFeather, maskHasRoom, maskPass } from "@/lib/editor/mask";
 import { toast } from "@/lib/client/toasts";
@@ -32,8 +33,8 @@ import { useAssets } from "@/lib/client/assets";
 import { useUploadMap, useUploads } from "@/lib/client/uploads";
 import { useSession } from "@/lib/client/session";
 import { useI18n } from "@/lib/i18n";
-import { FEET_PER_CELL } from "@/lib/limits";
-import { LAYER_ORDER, type AssetElement, type BrushElement, type MapContent, type MapElement, type TextElement } from "@/lib/types";
+import { FEET_PER_CELL, LIMITS } from "@/lib/limits";
+import { LAYER_ORDER, type AssetDef, type AssetElement, type BrushElement, type MapContent, type MapElement, type TextElement } from "@/lib/types";
 import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 
 export const ASSET_MIME = "application/x-mapforge-asset";
@@ -95,6 +96,17 @@ type Gesture =
       smoothing: number;
       frame: number; // pending requestAnimationFrame (0 = none)
     }
+  | {
+      kind: "scatter"; // scatter brush: library graphics dropped along the stroke
+      raw: [number, number][];
+      anchor: Pt;
+      straight: boolean;
+      seed: number;
+      assets: AssetDef[];
+      max: number;
+      smoothing: number;
+      frame: number;
+    }
   | { kind: "erase"; raw: [number, number][]; size: number; base: Map<string, BrushElement>; frame: number }
   | {
       kind: "mask"; // eraser / restore on the selected graphics
@@ -127,6 +139,7 @@ export default function EditorCanvas() {
   // The stroke being painted is drawn on its own layer on top of the map (and committed on
   // release), so the browser doesn't have to repaint the whole map on every pointer move.
   const [brushPreview, setBrushPreview] = useState<BrushElement | null>(null);
+  const [scatterPreview, setScatterPreview] = useState<AssetElement[] | null>(null);
   // Items being dragged: drawn once on a layer of their own that is only moved (CSS transform)
   // while dragging - nothing is re-rendered or repainted per pointer move. Committed on release.
   const [floating, setFloating] = useState<MapElement[] | null>(null);
@@ -213,7 +226,7 @@ export default function EditorCanvas() {
         if (!ring || !p) return;
         const s = useEditor.getState();
         const b = useBrush.getState().settings;
-        ring.setAttribute("r", String(brushPx(s.tool === "eraser" ? b.eraserSize : b.size, s.doc?.grid.size || 70) / 2));
+        ring.setAttribute("r", String(ringPx(b, s.tool === "eraser", s.doc?.grid.size || 70) / 2));
       }),
     [],
   );
@@ -348,6 +361,43 @@ export default function EditorCanvas() {
     if (s.tool === "pen") {
       gesture.current = { kind: "pen", points: [[world.x, world.y]] };
       setPenPts([[world.x, world.y]]);
+      return;
+    }
+    if (s.tool === "brush" && useBrush.getState().settings.kind === "scatter") {
+      const b = useBrush.getState().settings;
+      const byId = useAssets.getState().byId;
+      const assets = b.scatter.map((id) => byId[id]).filter((a): a is AssetDef => !!a);
+      if (!assets.length) {
+        toast(t("editor.brush.scatterNone"), "error");
+        return;
+      }
+      if (b.scatterLayer !== "auto") {
+        const layer = s.doc.layers.find((l) => l.id === b.scatterLayer);
+        if (layer?.locked || layer?.visible === false) {
+          toast(t(layer.locked ? "editor.brush.layerLocked" : "editor.brush.layerHidden"), "error");
+          return;
+        }
+      }
+      const max = Math.min(LIMITS.brush.maxStamps, LIMITS.map.maxElements - s.doc.elements.length);
+      if (max <= 0) {
+        toast(t("editor.brush.scatterFull"), "error");
+        return;
+      }
+      const straight = e.shiftKey && lastBrushEnd;
+      const start = straight ? lastBrushEnd! : e.shiftKey ? snapPt(world, e.altKey) : world;
+      const g: Gesture = {
+        kind: "scatter",
+        raw: straight ? [[start.x, start.y], [world.x, world.y]] : [[world.x, world.y]],
+        anchor: start,
+        straight: !!straight,
+        seed: newSeed(),
+        assets,
+        max,
+        smoothing: b.smoothing,
+        frame: 0,
+      };
+      gesture.current = g;
+      setScatterPreview(scatterStep(g, s.view.zoom));
       return;
     }
     if (s.tool === "brush") {
@@ -593,7 +643,8 @@ export default function EditorCanvas() {
         setPenPts([...g.points]);
         break;
       }
-      case "brush": {
+      case "brush":
+      case "scatter": {
         g.straight = e.shiftKey;
         if (e.shiftKey) {
           const p = s.snap && !e.altKey ? snapPt(world, false) : world;
@@ -607,7 +658,9 @@ export default function EditorCanvas() {
         if (!g.frame) {
           g.frame = requestAnimationFrame(() => {
             g.frame = 0;
-            setBrushPreview(paintStep(g, useEditor.getState().view.zoom));
+            const zoom = useEditor.getState().view.zoom;
+            if (g.kind === "scatter") setScatterPreview(scatterStep(g, zoom));
+            else setBrushPreview(paintStep(g, zoom));
           });
         }
         break;
@@ -640,6 +693,28 @@ export default function EditorCanvas() {
     const pts = g.straight ? g.raw : smoothStroke(g.raw, g.size, g.smoothing, zoom);
     if (g.base) return addPass(g.base, pts, g.size);
     return { ...brushElement(pts, g.size, g.style), id: g.id };
+  };
+
+  /** The stamps the scatter stroke drops so far. */
+  const scatterStep = (g: Extract<Gesture, { kind: "scatter" }>, zoom: number): AssetElement[] => {
+    const s = useEditor.getState();
+    const b = useBrush.getState().settings;
+    const grid = s.doc?.grid.size || 70;
+    const pts = g.straight ? g.raw : smoothStroke(g.raw, brushPx(b.scatterScale, grid), g.smoothing, zoom);
+    return scatterStamps(pts, {
+      assets: g.assets,
+      grid,
+      scale: b.scatterScale,
+      jitter: b.scatterJitter,
+      spacing: b.scatterSpacing,
+      spread: b.scatterSpread * grid,
+      rotate: b.scatterRotate,
+      flip: b.scatterFlip,
+      layer: b.scatterLayer,
+      opacity: b.opacity,
+      seed: g.seed,
+      max: g.max,
+    });
   };
 
   /** Applies the eraser stroke to every editable painted element it has touched so far. */
@@ -702,7 +777,7 @@ export default function EditorCanvas() {
       return;
     }
     const b = useBrush.getState().settings;
-    const px = brushPx(s.tool === "eraser" ? b.eraserSize : b.size, s.doc.grid.size || 70);
+    const px = ringPx(b, s.tool === "eraser", s.doc.grid.size || 70);
     ring.setAttribute("cx", String(world.x));
     ring.setAttribute("cy", String(world.y));
     ring.setAttribute("r", String(px / 2));
@@ -757,6 +832,20 @@ export default function EditorCanvas() {
         setBrushPreview(null);
         const last = g.raw[g.raw.length - 1];
         lastBrushEnd = { x: last[0], y: last[1] };
+        break;
+      }
+      case "scatter": {
+        if (g.frame) cancelAnimationFrame(g.frame);
+        const stamps = scatterStep(g, s.view.zoom);
+        setScatterPreview(null);
+        const last = g.raw[g.raw.length - 1];
+        lastBrushEnd = { x: last[0], y: last[1] };
+        // "Auto" layer: stamps whose own layer is locked or hidden are left out.
+        const open = new Set(s.doc.layers.filter((l) => l.visible && !l.locked).map((l) => l.id));
+        const placed = stamps.filter((el) => open.has(el.layer));
+        if (placed.length < stamps.length) toast(t(placed.length ? "editor.brush.scatterSomeLocked" : "editor.brush.scatterLayersLocked"), "error");
+        // Not selected: a selection would turn the eraser (X) into an eraser for these graphics.
+        if (placed.length) s.addElements(placed, false);
         break;
       }
       case "erase": {
@@ -1109,6 +1198,13 @@ export default function EditorCanvas() {
                   <ElementPreview el={brushPreview} idPrefix="pv" patterns={patterns} uploads={uploads} />
                 </g>
               </>
+            )}
+            {scatterPreview && (
+              <g data-testid="scatter-preview">
+                {scatterPreview.map((el) => (
+                  <ElementView key={el.id} el={el} idPrefix="sv" inert asset={assets[(el as AssetElement).assetId]} asImage />
+                ))}
+              </g>
             )}
             <circle
               ref={ringRef}

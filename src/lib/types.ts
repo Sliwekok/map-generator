@@ -114,6 +114,17 @@ export interface BrushOp {
 }
 
 /**
+ * How a brush stroke is drawn along its centre line. Missing = "solid" (a plain painted band).
+ * - dashed / dotted: trails and footpaths
+ * - double: two parallel lines with an empty middle (old-map roads)
+ * - rail: two rails over cross-ties (ties use `accent`)
+ * - fence: a thin line with square posts (posts use `accent`)
+ * - cliff: a line with hatching on one side (`flipSide` swaps the side)
+ */
+export type BrushLine = "solid" | "dashed" | "dotted" | "double" | "rail" | "fence" | "cliff";
+export const BRUSH_LINES: BrushLine[] = ["solid", "dashed", "dotted", "double", "rail", "fence", "cliff"];
+
+/**
  * Hand-painted stroke(s): rivers, roads, paths, lava… One element can hold several
  * passes of the same brush (they merge seamlessly, e.g. river forks).
  */
@@ -126,6 +137,16 @@ export interface BrushElement extends ElementBase {
   softness?: number; // 0..1 feathered edge (fraction of the brush size)
   edge?: string | null; // colour of the outline along the stroke (river banks, road kerbs)
   edgeWidth?: number; // px on each side of the stroke
+  /** Line style; missing = solid. */
+  line?: Exclude<BrushLine, "solid">;
+  /** Gap multiplier for dashes, dots, ties, posts and hatching (1 = default). */
+  spacing?: number;
+  /** Second colour: rail ties, fence posts. */
+  accent?: string | null;
+  /** 0..1 jagged, organic outline (coastlines, cave walls, rubble). Solid strokes only. */
+  rough?: number;
+  /** Cliff hatching on the other side of the line. */
+  flipSide?: true;
 }
 
 export type MapElement = AssetElement | ShapeElement | TextElement | PathElement | BrushElement;

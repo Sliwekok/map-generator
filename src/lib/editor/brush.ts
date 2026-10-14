@@ -1,16 +1,21 @@
 // Brush painting helpers: element creation, merging passes, erasing, smoothing and the
 // curve used to draw strokes. Everything here is pure (no store / DOM access).
 
-import type { BrushElement, BrushOp, LayerId, MapContent, MapElement } from "@/lib/types";
+import type { BrushElement, BrushLine, BrushOp, LayerId, MapContent, MapElement } from "@/lib/types";
 import { LIMITS } from "@/lib/limits";
 import { center, rotatePt, simplify, type Box, type Pt } from "./geometry";
 import { newId } from "./store";
 import { featherOf } from "./brushShape";
+import { lineTakesAccent, lineTakesEdge, lineTakesSpacing, lineTakesTexture, roughGrowth } from "./brushLines";
 
 export { featherOf, mainSize, smoothD } from "./brushShape";
 
+export type ScatterRotate = "random" | "follow" | "none";
+
 /** Brush settings as the painter UI keeps them (sizes are in grid cells, so they suit any map). */
 export interface BrushSettings {
+  /** Paint a band of colour / texture, or scatter library graphics along the stroke. */
+  kind: "paint" | "scatter";
   size: number; // cells
   color: string;
   texture: string | null; // pattern id or "u:<uploadId>"
@@ -28,6 +33,21 @@ export interface BrushSettings {
   eraserSoftness: number;
   /** The eraser paints erased parts of the selected graphics back instead of erasing. */
   eraserRestore: boolean;
+  // Line style (paint brush)
+  line: BrushLine;
+  lineSpacing: number; // gap multiplier
+  accent: string; // rail ties, fence posts
+  rough: number; // 0..1 organic outline (solid only)
+  flipSide: boolean; // cliff hatching on the other side
+  // Scatter brush
+  scatter: string[]; // library asset ids, picked at random
+  scatterScale: number; // × the asset's own size
+  scatterJitter: number; // 0..1 size variation
+  scatterSpacing: number; // gap between stamps × their size (1 = about touching)
+  scatterSpread: number; // cells across the stroke
+  scatterRotate: ScatterRotate;
+  scatterFlip: boolean; // random mirroring
+  scatterLayer: LayerId | "auto"; // auto = each graphic's own layer
 }
 
 export const DEFAULT_BRUSH: BrushSettings = {
@@ -46,30 +66,85 @@ export const DEFAULT_BRUSH: BrushSettings = {
   eraserSize: 0.8,
   eraserSoftness: 0,
   eraserRestore: false,
+  kind: "paint",
+  line: "solid",
+  lineSpacing: 1,
+  accent: "#4a3826",
+  rough: 0,
+  flipSide: false,
+  scatter: ["tree", "bush"],
+  scatterScale: 0.6,
+  scatterJitter: 0.3,
+  scatterSpacing: 1,
+  scatterSpread: 1.5,
+  scatterRotate: "random",
+  scatterFlip: true,
+  scatterLayer: "auto",
 };
+
+export type PresetGroup = "areas" | "lines" | "rough" | "scatter";
 
 export interface BrushPreset {
   id: string;
+  group: PresetGroup;
   /** Tried in order: the first texture the user can use wins; otherwise the colour alone is used. */
   textures: string[];
+  /** Scatter presets: the graphics the user can use are kept, the rest skipped. */
+  assets?: string[];
   settings: Partial<BrushSettings>;
 }
 
 export const BRUSH_PRESETS: BrushPreset[] = [
-  { id: "river", textures: ["p-water"], settings: { size: 0.8, color: "#3f7fb5", textureScale: 1.5, softness: 0.15, edge: true, edgeColor: "#7a6a45", edgeWidth: 0.1, layer: "terrain" } },
-  { id: "stream", textures: ["p-water"], settings: { size: 0.3, color: "#4d8fc4", textureScale: 1, softness: 0.2, edge: true, edgeColor: "#7a6a45", edgeWidth: 0.05, layer: "terrain" } },
-  { id: "road", textures: ["cobble"], settings: { size: 1, color: "#8d8173", textureScale: 0.5, softness: 0, edge: true, edgeColor: "#4a4238", edgeWidth: 0.06, layer: "terrain" } },
-  { id: "path", textures: [], settings: { size: 0.45, color: "#a07d52", softness: 0.6, edge: false, layer: "terrain" } },
-  { id: "lava", textures: ["p-lava-rock"], settings: { size: 0.9, color: "#e8590c", textureScale: 1, softness: 0.15, edge: true, edgeColor: "#2b1d16", edgeWidth: 0.1, layer: "terrain" } },
-  { id: "sand", textures: ["p-sand"], settings: { size: 1.5, color: "#e3cf96", textureScale: 1, softness: 0.8, edge: false, layer: "terrain" } },
-  { id: "grass", textures: ["grass"], settings: { size: 1.5, color: "#7fae4e", textureScale: 1, softness: 0.8, edge: false, layer: "terrain" } },
-  { id: "snow", textures: ["p-snow"], settings: { size: 1.5, color: "#f1f5f9", textureScale: 1, softness: 0.8, edge: false, layer: "terrain" } },
-  { id: "wall", textures: [], settings: { size: 0.2, color: "#3d3a36", softness: 0, edge: true, edgeColor: "#141312", edgeWidth: 0.03, layer: "objects" } },
+  { id: "river", group: "areas", textures: ["p-water"], settings: { size: 0.8, color: "#3f7fb5", textureScale: 1.5, softness: 0.15, edge: true, edgeColor: "#7a6a45", edgeWidth: 0.1, layer: "terrain" } },
+  { id: "stream", group: "areas", textures: ["p-water"], settings: { size: 0.3, color: "#4d8fc4", textureScale: 1, softness: 0.2, edge: true, edgeColor: "#7a6a45", edgeWidth: 0.05, layer: "terrain" } },
+  { id: "road", group: "areas", textures: ["cobble"], settings: { size: 1, color: "#8d8173", textureScale: 0.5, softness: 0, edge: true, edgeColor: "#4a4238", edgeWidth: 0.06, layer: "terrain" } },
+  { id: "path", group: "areas", textures: [], settings: { size: 0.45, color: "#a07d52", softness: 0.6, edge: false, layer: "terrain" } },
+  { id: "lava", group: "areas", textures: ["p-lava-rock"], settings: { size: 0.9, color: "#e8590c", textureScale: 1, softness: 0.15, edge: true, edgeColor: "#2b1d16", edgeWidth: 0.1, layer: "terrain" } },
+  { id: "sand", group: "areas", textures: ["p-sand"], settings: { size: 1.5, color: "#e3cf96", textureScale: 1, softness: 0.8, edge: false, layer: "terrain" } },
+  { id: "grass", group: "areas", textures: ["grass"], settings: { size: 1.5, color: "#7fae4e", textureScale: 1, softness: 0.8, edge: false, layer: "terrain" } },
+  { id: "snow", group: "areas", textures: ["p-snow"], settings: { size: 1.5, color: "#f1f5f9", textureScale: 1, softness: 0.8, edge: false, layer: "terrain" } },
+  { id: "wall", group: "areas", textures: [], settings: { size: 0.2, color: "#3d3a36", softness: 0, edge: true, edgeColor: "#141312", edgeWidth: 0.03, layer: "objects" } },
+  // Line styles
+  { id: "trail", group: "lines", textures: [], settings: { line: "dashed", size: 0.14, color: "#7a5a36", lineSpacing: 1, softness: 0, edge: false, layer: "terrain" } },
+  { id: "footpath", group: "lines", textures: [], settings: { line: "dotted", size: 0.12, color: "#5b4129", lineSpacing: 1.1, softness: 0, edge: false, layer: "terrain" } },
+  { id: "oldRoad", group: "lines", textures: [], settings: { line: "double", size: 0.45, color: "#4a4238", softness: 0, edge: false, layer: "terrain" } },
+  { id: "railway", group: "lines", textures: [], settings: { line: "rail", size: 0.5, color: "#55534f", accent: "#6b4f2f", lineSpacing: 1, softness: 0, edge: false, layer: "terrain" } },
+  { id: "fence", group: "lines", textures: [], settings: { line: "fence", size: 0.28, color: "#7a5c3a", accent: "#3f2e1e", lineSpacing: 1, softness: 0, edge: false, layer: "objects" } },
+  { id: "cliff", group: "lines", textures: [], settings: { line: "cliff", size: 0.6, color: "#3d3a36", lineSpacing: 1, flipSide: false, softness: 0, edge: false, layer: "terrain" } },
+  // Rough outlines
+  { id: "coast", group: "rough", textures: ["p-sand"], settings: { rough: 0.7, size: 1.4, color: "#e3cf96", textureScale: 1, softness: 0, edge: true, edgeColor: "#b39b6a", edgeWidth: 0.06, layer: "terrain" } },
+  { id: "pond", group: "rough", textures: ["p-water"], settings: { rough: 0.5, size: 1.6, color: "#3f7fb5", textureScale: 1.5, softness: 0, edge: true, edgeColor: "#6b5a3e", edgeWidth: 0.1, layer: "terrain" } },
+  { id: "caveWall", group: "rough", textures: [], settings: { rough: 0.8, size: 0.7, color: "#2b2622", softness: 0, edge: true, edgeColor: "#14110f", edgeWidth: 0.04, layer: "objects" } },
+  { id: "rubble", group: "rough", textures: ["f-gravel", "cobble"], settings: { rough: 1, size: 0.9, color: "#8d8173", textureScale: 0.75, softness: 0, edge: true, edgeColor: "#4a4238", edgeWidth: 0.04, layer: "terrain" } },
+  // Scatter
+  { id: "forest", group: "scatter", textures: [], assets: ["tree", "p-pine", "bush"], settings: { scatterScale: 0.6, scatterJitter: 0.35, scatterSpacing: 0.75, scatterSpread: 1.5, scatterRotate: "random", scatterFlip: true } },
+  { id: "pines", group: "scatter", textures: [], assets: ["p-pine", "tree"], settings: { scatterScale: 0.6, scatterJitter: 0.3, scatterSpacing: 0.7, scatterSpread: 1, scatterRotate: "random", scatterFlip: true } },
+  { id: "bushes", group: "scatter", textures: [], assets: ["bush", "grass-tuft"], settings: { scatterScale: 0.8, scatterJitter: 0.35, scatterSpacing: 0.8, scatterSpread: 0.8, scatterRotate: "random", scatterFlip: true } },
+  { id: "grassTufts", group: "scatter", textures: [], assets: ["grass-tuft"], settings: { scatterScale: 0.6, scatterJitter: 0.4, scatterSpacing: 1, scatterSpread: 1, scatterRotate: "random", scatterFlip: true } },
+  { id: "rocks", group: "scatter", textures: [], assets: ["rock", "p-boulders"], settings: { scatterScale: 0.6, scatterJitter: 0.5, scatterSpacing: 1.3, scatterSpread: 1, scatterRotate: "random", scatterFlip: true } },
+  { id: "deadwood", group: "scatter", textures: [], assets: ["p-deadtree", "p-log"], settings: { scatterScale: 0.6, scatterJitter: 0.3, scatterSpacing: 1.2, scatterSpread: 1.2, scatterRotate: "random", scatterFlip: true } },
+  { id: "mushrooms", group: "scatter", textures: [], assets: ["p-mushrooms"], settings: { scatterScale: 0.5, scatterJitter: 0.4, scatterSpacing: 1.4, scatterSpread: 1, scatterRotate: "random", scatterFlip: true } },
+  { id: "desert", group: "scatter", textures: [], assets: ["p-cactus", "rock"], settings: { scatterScale: 0.8, scatterJitter: 0.35, scatterSpacing: 2, scatterSpread: 2, scatterRotate: "none", scatterFlip: true } },
+  { id: "clutter", group: "scatter", textures: [], assets: ["t-barrel", "t-crates", "t-sacks", "p-barrel", "p-crate"], settings: { scatterScale: 0.9, scatterJitter: 0.15, scatterSpacing: 0.9, scatterSpread: 0.4, scatterRotate: "random", scatterFlip: true } },
 ];
 
-/** Settings a preset produces, given which textures the user can use. */
-export function presetSettings(p: BrushPreset, canUse: (texture: string) => boolean): Partial<BrushSettings> {
-  return { ...p.settings, texture: p.textures.find(canUse) ?? null };
+/** What a paint preset leaves at its default unless it sets it (so no style leaks between presets). */
+const PAINT_RESET: Partial<BrushSettings> = { kind: "paint", line: "solid", lineSpacing: 1, rough: 0, flipSide: false };
+
+/**
+ * Settings a preset produces, given which textures / graphics the user can use. Returns null for a
+ * scatter preset none of whose graphics are available.
+ */
+export function presetSettings(
+  p: BrushPreset,
+  canUse: (texture: string) => boolean,
+  canUseAsset: (asset: string) => boolean = () => true,
+): Partial<BrushSettings> | null {
+  if (p.group === "scatter") {
+    const scatter = (p.assets ?? []).filter(canUseAsset);
+    return scatter.length ? { ...p.settings, kind: "scatter", scatter } : null;
+  }
+  return { ...PAINT_RESET, ...p.settings, texture: p.textures.find(canUse) ?? null };
 }
 
 // ---------------------------------------------------------------------------
@@ -79,9 +154,11 @@ export function presetSettings(p: BrushPreset, canUse: (texture: string) => bool
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 
-/** How far paint of one pass reaches beyond its centre line (stroke, edge and feathering). */
-function reach(el: Pick<BrushElement, "softness" | "edge" | "edgeWidth">, size: number): number {
-  return size / 2 + (el.edge ? (el.edgeWidth ?? 0) : 0) + featherOf(el.softness, size) / 2 + 1;
+/** How far paint of one pass reaches beyond its centre line (stroke, edge, rough outline and feathering). */
+function reach(el: Pick<BrushElement, "softness" | "edge" | "edgeWidth" | "rough" | "line">, size: number): number {
+  const edge = el.edge && lineTakesEdge(el.line) ? (el.edgeWidth ?? 0) : 0;
+  const grow = el.line ? 0 : roughGrowth(el.rough);
+  return (size / 2) * (1 + grow) + edge + featherOf(el.softness, size) / 2 + 1;
 }
 
 /** Local box of the painted (non-eraser) passes, including their reach. */
@@ -141,19 +218,32 @@ export interface BrushStyle {
   edgeWidth?: number;
   opacity: number;
   layer: LayerId;
+  line?: BrushElement["line"];
+  spacing?: number;
+  accent?: string | null;
+  rough?: number;
+  flipSide?: true;
 }
 
-/** Resolves UI settings (cells) into the pixel style stored on elements. */
+/** Resolves UI settings (cells) into the pixel style stored on elements. Options a line style doesn't draw are left out. */
 export function styleFrom(b: BrushSettings, grid: number): BrushStyle {
+  const line = b.line === "solid" ? undefined : b.line;
+  const texture = lineTakesTexture(line) ? b.texture : null;
+  const edge = b.edge && lineTakesEdge(line);
   return {
     color: b.color,
-    texture: b.texture,
-    textureSize: b.texture ? Math.max(2, Math.round(b.textureScale * grid * 10) / 10) : undefined,
+    texture,
+    textureSize: texture ? Math.max(2, Math.round(b.textureScale * grid * 10) / 10) : undefined,
     softness: b.softness > 0 ? b.softness : undefined,
-    edge: b.edge ? b.edgeColor : null,
-    edgeWidth: b.edge ? Math.max(0.5, Math.round(b.edgeWidth * grid * 10) / 10) : undefined,
+    edge: edge ? b.edgeColor : null,
+    edgeWidth: edge ? Math.max(0.5, Math.round(b.edgeWidth * grid * 10) / 10) : undefined,
     opacity: b.opacity,
     layer: b.layer,
+    line,
+    spacing: lineTakesSpacing(line) && Math.abs(b.lineSpacing - 1) > 0.001 ? b.lineSpacing : undefined,
+    accent: lineTakesAccent(line) ? b.accent : undefined,
+    rough: !line && b.rough > 0 ? b.rough : undefined,
+    flipSide: line === "cliff" && b.flipSide ? true : undefined,
   };
 }
 
@@ -178,8 +268,20 @@ export function brushElement(worldPts: [number, number][], size: number, style: 
     softness: style.softness,
     edge: style.edge,
     edgeWidth: style.edgeWidth,
+    ...lineFields(style),
   };
   return fitBrushBox(el);
+}
+
+/** The line-style fields of a style, without undefined keys (elements stay compact). */
+export function lineFields(s: Pick<BrushStyle, "line" | "spacing" | "accent" | "rough" | "flipSide">): Partial<BrushElement> {
+  const out: Partial<BrushElement> = {};
+  if (s.line) out.line = s.line;
+  if (s.spacing !== undefined) out.spacing = s.spacing;
+  if (s.accent) out.accent = s.accent;
+  if (s.rough) out.rough = s.rough;
+  if (s.flipSide) out.flipSide = true;
+  return out;
 }
 
 /** Adds a pass (brush or eraser) given in map coordinates to an existing element. */
@@ -274,7 +376,12 @@ export function sameStyle(el: BrushElement, s: BrushStyle): boolean {
     near(el.softness, s.softness) &&
     (el.edge ?? null)?.toLowerCase() === (s.edge ?? null)?.toLowerCase() &&
     (!s.edge || near(el.edgeWidth, s.edgeWidth)) &&
-    near(el.opacity, s.opacity)
+    near(el.opacity, s.opacity) &&
+    (el.line ?? null) === (s.line ?? null) &&
+    near(el.spacing ?? 1, s.spacing ?? 1) &&
+    (el.accent ?? null)?.toLowerCase() === (s.accent ?? null)?.toLowerCase() &&
+    near(el.rough, s.rough) &&
+    !!el.flipSide === !!s.flipSide
   );
 }
 
@@ -319,7 +426,7 @@ export function fullyErased(el: BrushElement): boolean {
     if (op.erase) continue;
     const later = el.ops.slice(i + 1).filter((o) => o.erase);
     if (!later.length) return false;
-    const half = op.size / 2 + (el.edge ? (el.edgeWidth ?? 0) : 0);
+    const half = (op.size / 2) * (1 + (el.line ? 0 : roughGrowth(el.rough))) + (el.edge && lineTakesEdge(el.line) ? (el.edgeWidth ?? 0) : 0);
     for (const [x, y, nx, ny] of samples(op.points, Math.max(1, op.size / 4))) {
       for (const k of [-1, -0.5, 0, 0.5, 1]) {
         const sx = x + nx * half * k;
@@ -428,4 +535,11 @@ export function restyleBrush(el: BrushElement, patch: Partial<BrushElement>): Br
 /** Scales every pass width (brush and eraser) by k - the "brush size" of an existing stroke. */
 export function resizePasses(el: BrushElement, k: number): BrushElement {
   return fitBrushBox({ ...el, ops: el.ops.map((o) => ({ ...o, size: Math.min(LIMITS.brush.maxSize, Math.max(0.5, o.size * k)) })) });
+}
+
+/** Diameter (px) of the outline that follows the pointer for the active tool. */
+export function ringPx(b: BrushSettings, eraser: boolean, grid: number): number {
+  if (eraser) return brushPx(b.eraserSize, grid);
+  if (b.kind === "scatter") return brushPx(b.scatterSpread + b.scatterScale, grid);
+  return brushPx(b.size, grid);
 }

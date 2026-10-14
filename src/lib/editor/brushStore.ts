@@ -1,13 +1,21 @@
 "use client";
 
 import { create } from "zustand";
-import { LAYER_ORDER } from "@/lib/types";
+import { BRUSH_LINES, LAYER_ORDER } from "@/lib/types";
 import { DEFAULT_BRUSH, type BrushSettings } from "./brush";
 
 const KEY = "mf_brush";
 
-/** Slider ranges in grid cells. */
-export const BRUSH_LIMITS = { size: [0.05, 8] as [number, number] };
+/** Slider ranges (grid cells, or multipliers). */
+export const BRUSH_LIMITS = {
+  size: [0.05, 8] as [number, number],
+  lineSpacing: [0.25, 4] as [number, number],
+  scatterScale: [0.1, 4] as [number, number],
+  scatterSpacing: [0.2, 4] as [number, number],
+  scatterSpread: [0, 8] as [number, number],
+  /** Graphics one scatter brush picks from. */
+  scatterAssets: 12,
+};
 
 /** Brush settings are a per-browser convenience: remembered across maps, never saved in a map. */
 function read(): BrushSettings {
@@ -43,6 +51,22 @@ function sanitize(b: BrushSettings): BrushSettings {
     eraserSize: clamp(b.eraserSize, BRUSH_LIMITS.size[0], BRUSH_LIMITS.size[1], d.eraserSize),
     eraserSoftness: clamp(b.eraserSoftness, 0, 1, d.eraserSoftness),
     eraserRestore: typeof b.eraserRestore === "boolean" ? b.eraserRestore : d.eraserRestore,
+    kind: b.kind === "scatter" ? "scatter" : "paint",
+    line: BRUSH_LINES.includes(b.line) ? b.line : d.line,
+    lineSpacing: clamp(b.lineSpacing, BRUSH_LIMITS.lineSpacing[0], BRUSH_LIMITS.lineSpacing[1], d.lineSpacing),
+    accent: isColor(b.accent) ? b.accent : d.accent,
+    rough: clamp(b.rough, 0, 1, d.rough),
+    flipSide: typeof b.flipSide === "boolean" ? b.flipSide : d.flipSide,
+    scatter: Array.isArray(b.scatter)
+      ? [...new Set(b.scatter.filter((x): x is string => typeof x === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(x)))].slice(0, BRUSH_LIMITS.scatterAssets)
+      : d.scatter,
+    scatterScale: clamp(b.scatterScale, BRUSH_LIMITS.scatterScale[0], BRUSH_LIMITS.scatterScale[1], d.scatterScale),
+    scatterJitter: clamp(b.scatterJitter, 0, 1, d.scatterJitter),
+    scatterSpacing: clamp(b.scatterSpacing, BRUSH_LIMITS.scatterSpacing[0], BRUSH_LIMITS.scatterSpacing[1], d.scatterSpacing),
+    scatterSpread: clamp(b.scatterSpread, BRUSH_LIMITS.scatterSpread[0], BRUSH_LIMITS.scatterSpread[1], d.scatterSpread),
+    scatterRotate: b.scatterRotate === "follow" || b.scatterRotate === "none" ? b.scatterRotate : "random",
+    scatterFlip: typeof b.scatterFlip === "boolean" ? b.scatterFlip : d.scatterFlip,
+    scatterLayer: b.scatterLayer === "auto" || LAYER_ORDER.includes(b.scatterLayer as never) ? b.scatterLayer : d.scatterLayer,
   };
 }
 
@@ -51,7 +75,7 @@ interface BrushState {
   /** Preset the current settings came from (cleared by any manual change). */
   preset: string | null;
   set: (patch: Partial<BrushSettings>, preset?: string | null) => void;
-  /** Multiplies the active tool's size (brush or eraser) - bound to [ and ]. */
+  /** Multiplies the active tool's size (brush, scatter stamps or eraser) - bound to [ and ]. */
   grow: (factor: number, eraser: boolean) => void;
 }
 
@@ -71,6 +95,7 @@ export const useBrush = create<BrushState>((set, get) => ({
     const s = get().settings;
     const r = (n: number) => Math.round(n * 100) / 100;
     if (eraser) get().set({ eraserSize: r(s.eraserSize * factor) }, get().preset);
+    else if (s.kind === "scatter") get().set({ scatterScale: r(s.scatterScale * factor) }, get().preset);
     else get().set({ size: r(s.size * factor) }, get().preset);
   },
 }));

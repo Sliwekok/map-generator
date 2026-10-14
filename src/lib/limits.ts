@@ -50,6 +50,8 @@ export const LIMITS = {
     /** Points across all passes of one element. */
     maxPoints: 30000,
     maxSize: 2000,
+    /** Graphics one scatter-brush stroke may drop. */
+    maxStamps: 300,
   },
 } as const;
 

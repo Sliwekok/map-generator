@@ -176,10 +176,12 @@ export const HELP_EN: HelpSection[] = [
     id: "painting",
     title: "Painting with the brush",
     blocks: [
-      "The Brush (B) paints by hand — rivers, streams, roads, dirt paths, lava flows, patches of sand, grass or snow. Pick the Brush in the toolbar; its settings appear in the right panel.",
+      "The Brush (B) paints by hand — rivers, streams, roads, dirt paths, lava flows, patches of sand, grass or snow, trails, fences, railways and cliffs — or scatters trees and rocks along a stroke. Pick the Brush in the toolbar; its settings appear in the right panel. The switch at the top chooses Paint or Scatter.",
       {
         list: [
-          "Presets — one click sets up a River, Stream, Road, Dirt path, Lava, Sand, Grass, Snow or Wall brush. Presets whose texture is in the extended pack paint with colour for guests (marked with a lock).",
+          "Presets — one click sets up a brush. Areas & paths: River, Stream, Road, Dirt path, Lava, Sand, Grass, Snow, Wall. Lines: Trail, Footpath, Old road, Railway, Fence, Cliff. Rough edges: Coast, Pond, Cave wall, Rubble. Presets whose texture is in the extended pack paint with colour for guests (marked with a lock).",
+          "Line style — Solid (a painted band), Dashed or Dotted (trails, footpaths), Double (two parallel lines with an open middle, like roads on old maps), Railway (rails over cross-ties), Fence (a line with posts) or Cliff (a line with hatching on one side — tick “Hatching on the other side” to swap it). Spacing sets the gaps between dashes, dots, ties, posts or hatches; Railway and Fence have a second colour for the ties / posts. Railway, Fence and Cliff are drawn in colour only.",
+          "Rough edge (solid strokes) — a jagged, organic outline instead of a smooth one: low values for coastlines and ponds, high values for cave walls and rubble. It works with textures, the edge outline and soft edges.",
           "Paint — a colour, a texture from the library, or an image from My files (logged-in users; it repeats as square tiles). The base colour shows under the texture and is used whenever the texture can't be shown. Textures are anchored to the map, so strokes that touch continue the same pattern.",
           "Size is set in grid cells, so a brush fits any map. [ and ] make it smaller or bigger while painting; the outline under the pointer shows the size.",
           "Soft edges feather the stroke for natural blending, Smoothing evens out a shaky hand, and Edge adds an outline along the stroke — river banks, road kerbs, a lava crust.",
@@ -190,8 +192,10 @@ export const HELP_EN: HelpSection[] = [
       },
       "The Eraser (X) removes paint from brush strokes on visible, unlocked layers — drag across a river to make a ford, or tidy an edge. A stroke erased completely is removed. Erasing is kept inside the stroke, so it can be undone with Ctrl+Z or later with “Restore erased parts”.",
       "The Eraser also works on uploaded images and library graphics: select the graphic first (V), then press X (or use “Erase parts” in its properties or right-click menu). While a graphic is selected the eraser only touches the selection — brush strokes and other items stay as they are. Switch the mode to Restore (or hold Alt for one stroke) to paint erased parts back, and use Softness for a feathered edge that blends the image into the map. Erasing never changes the original file: it is kept with the item, follows it when you move, rotate, flip or resize it, and “Show erased parts again” brings the whole graphic back.",
-      "Every painted stroke is a normal item: select it to move, rotate, scale, change its layer, or restyle it (size, paint, texture scale, softness, edge). “Paint with this brush” copies a stroke's look back into the brush.",
-      { tip: "Paint rivers and roads on the Terrain layer, then place bridges and trees from the library on the Objects layer above them." },
+      "Every painted stroke is a normal item: select it to move, rotate, scale, change its layer, or restyle it (size, line style, rough edge, paint, texture scale, softness, edge). “Paint with this brush” copies a stroke's look back into the brush.",
+      "Scatter drops library graphics along the stroke — a forest edge, rocks along a cliff, grass tufts, crates in a yard. Pick a preset (Forest, Pines, Bushes, Grass tufts, Rocks, Deadwood, Mushrooms, Desert, Clutter) or choose up to 12 graphics yourself; only packs you can use are offered. Size scales the graphics, Size variation mixes big and small ones, Spacing sets the gaps (100% = about touching), Spread scatters them across the stroke, and Rotation is Random, Follow (along the stroke) or None. “Each graphic's own layer” puts trees on Objects and grass on Terrain, or pick one layer for all.",
+      "Every scattered graphic is a normal item you can move, recolour, erase parts of or delete. One Ctrl+Z undoes the whole stroke. [ and ] change their size.",
+      { tip: "Paint rivers and roads on the Terrain layer, then place bridges and trees from the library on the Objects layer above them — or scatter a forest along the river bank with one stroke." },
     ],
   },
   {
@@ -485,10 +489,12 @@ export const HELP_PL: HelpSection[] = [
     id: "painting",
     title: "Malowanie pędzlem",
     blocks: [
-      "Pędzel (B) pozwala malować ręcznie — rzeki, strumienie, drogi, ścieżki, potoki lawy, płaty piasku, trawy czy śniegu. Wybierz Pędzel na pasku narzędzi; jego ustawienia pojawią się w prawym panelu.",
+      "Pędzel (B) pozwala malować ręcznie — rzeki, strumienie, drogi, ścieżki, potoki lawy, płaty piasku, trawy czy śniegu, szlaki, płoty, tory i urwiska — albo rozsypywać drzewa i skały wzdłuż pociągnięcia. Wybierz Pędzel na pasku narzędzi; jego ustawienia pojawią się w prawym panelu. Przełącznik na górze wybiera Farbę albo Rozsypywanie.",
       {
         list: [
-          "Gotowe pędzle — jedno kliknięcie ustawia pędzel Rzeka, Strumień, Droga, Ścieżka, Lawa, Piasek, Trawa, Śnieg lub Mur. Pędzle z teksturą z rozszerzonego pakietu malują gościom samym kolorem (oznaczone kłódką).",
+          "Gotowe pędzle — jedno kliknięcie ustawia pędzel. Obszary i drogi: Rzeka, Strumień, Droga, Ścieżka, Lawa, Piasek, Trawa, Śnieg, Mur. Linie: Szlak, Ścieżka kropkowana, Stara droga, Tory, Płot, Urwisko. Postrzępione brzegi: Wybrzeże, Staw, Ściana jaskini, Gruz. Pędzle z teksturą z rozszerzonego pakietu malują gościom samym kolorem (oznaczone kłódką).",
+          "Styl linii — Pełna (pas farby), Kreskowana lub Kropkowana (szlaki, ścieżki), Podwójna (dwie równoległe linie z pustym środkiem, jak drogi na starych mapach), Tory (szyny na podkładach), Płot (linia ze słupkami) albo Urwisko (linia z kreskowaniem po jednej stronie — zaznacz „Kreskowanie po drugiej stronie”, aby je przenieść). Odstęp ustala przerwy między kreskami, kropkami, podkładami, słupkami lub kreskowaniem; Tory i Płot mają drugi kolor podkładów / słupków. Tory, Płot i Urwisko są rysowane tylko kolorem.",
+          "Postrzępiona krawędź (linia pełna) — nieregularny, naturalny brzeg zamiast gładkiego: małe wartości dla wybrzeży i stawów, duże dla ścian jaskiń i gruzu. Działa z teksturami, obrzeżem i miękkimi krawędziami.",
           "Farba — kolor, tekstura z biblioteki albo obraz z Moich plików (dla zalogowanych; powtarza się jako kwadratowe kafelki). Kolor bazowy widać pod teksturą i jest używany, gdy tekstury nie da się pokazać. Tekstury są zakotwiczone w mapie, więc stykające się pociągnięcia mają ciągły wzór.",
           "Rozmiar podaje się w polach siatki, więc pędzel pasuje do każdej mapy. [ i ] zmniejszają i zwiększają go w trakcie malowania; obrys pod kursorem pokazuje rozmiar.",
           "Miękkie krawędzie rozmywają brzeg pociągnięcia, Wygładzanie wyrównuje drżenie ręki, a Obrzeże dodaje obwódkę wzdłuż pociągnięcia — brzegi rzeki, krawężniki, skorupę lawy.",
@@ -499,8 +505,10 @@ export const HELP_PL: HelpSection[] = [
       },
       "Gumka (X) zmazuje farbę z pociągnięć pędzla na widocznych i odblokowanych warstwach — przeciągnij przez rzekę, aby zrobić bród, albo popraw krawędź. Całkiem zmazane pociągnięcie znika. Zmazania są zapisane w pociągnięciu, więc cofniesz je Ctrl+Z albo później przyciskiem „Przywróć zmazane fragmenty”.",
       "Gumka działa też na wgranych obrazach i grafikach z biblioteki: najpierw zaznacz grafikę (V), potem naciśnij X (albo użyj „Zmazuj fragmenty” we właściwościach lub w menu pod prawym przyciskiem). Gdy grafika jest zaznaczona, gumka zmienia tylko zaznaczenie — pociągnięcia pędzla i inne elementy zostają bez zmian. Przełącz tryb na Przywracaj (albo przytrzymaj Alt na jedno pociągnięcie), aby domalować zmazane fragmenty, a Miękkość daje rozmytą krawędź, która wtapia obraz w mapę. Zmazywanie nigdy nie zmienia oryginalnego pliku: jest zapisane w elemencie, podąża za nim przy przesuwaniu, obracaniu, odbijaniu i zmianie rozmiaru, a „Pokaż zmazane fragmenty” przywraca całą grafikę.",
-      "Każde namalowane pociągnięcie to zwykły element: zaznacz je, aby przesunąć, obrócić, przeskalować, zmienić warstwę albo wygląd (rozmiar, farbę, skalę tekstury, miękkość, obrzeże). „Maluj tym pędzlem” kopiuje wygląd pociągnięcia z powrotem do pędzla.",
-      { tip: "Maluj rzeki i drogi na warstwie Teren, a mosty i drzewa z biblioteki stawiaj nad nimi na warstwie Obiekty." },
+      "Każde namalowane pociągnięcie to zwykły element: zaznacz je, aby przesunąć, obrócić, przeskalować, zmienić warstwę albo wygląd (rozmiar, styl linii, postrzępienie, farbę, skalę tekstury, miękkość, obrzeże). „Maluj tym pędzlem” kopiuje wygląd pociągnięcia z powrotem do pędzla.",
+      "Rozsypywanie rozrzuca grafiki z biblioteki wzdłuż pociągnięcia — skraj lasu, skały pod urwiskiem, kępy trawy, skrzynie na podwórzu. Wybierz gotowy pędzel (Las, Sosny, Krzaki, Kępy trawy, Skały, Martwe drzewa, Grzyby, Pustynia, Graty) albo sam wybierz do 12 grafik; dostępne są tylko pakiety, których możesz używać. Rozmiar skaluje grafiki, Zróżnicowanie rozmiaru miesza duże i małe, Odstęp ustala przerwy (100% = prawie się stykają), Rozrzut rozsypuje je w poprzek pociągnięcia, a Obrót jest Losowy, Wzdłuż (pociągnięcia) albo Brak. „Własna warstwa każdej grafiki” kładzie drzewa na Obiektach, a trawę na Terenie — albo wybierz jedną warstwę dla wszystkich.",
+      "Każda rozsypana grafika to zwykły element, który można przesunąć, przebarwić, częściowo zmazać albo usunąć. Jedno Ctrl+Z cofa całe pociągnięcie. [ i ] zmieniają ich rozmiar.",
+      { tip: "Maluj rzeki i drogi na warstwie Teren, a mosty i drzewa z biblioteki stawiaj nad nimi na warstwie Obiekty — albo jednym pociągnięciem rozsyp las wzdłuż brzegu rzeki." },
     ],
   },
   {

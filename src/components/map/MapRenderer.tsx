@@ -1,9 +1,10 @@
 import { memo, useMemo } from "react";
-import type { AssetDef, BrushElement, GraphicMask, LayerId, LayerState, MapContent, MapElement, PatternDef } from "@/lib/types";
+import type { AssetDef, BrushElement, BrushOp, GraphicMask, LayerId, LayerState, MapContent, MapElement, PatternDef } from "@/lib/types";
 import { LAYER_ORDER } from "@/lib/types";
 import { FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { pathD } from "@/lib/editor/geometry";
 import { featherOf, mainSize, smoothD } from "@/lib/editor/brushShape";
+import { cliffD, dashArray, LINE, lineTakesEdge, lineTakesTexture, opSeed, roughD } from "@/lib/editor/brushLines";
 import { assetImage } from "@/lib/client/assetImages";
 
 export interface RenderLookups {
@@ -582,6 +583,11 @@ function BrushView({
     </g>
   );
 
+  // Line styles and rough outlines have their own renderer; plain strokes keep the one below.
+  if (el.line || el.rough) {
+    return <StyledBrushView el={el} uid={uid} paths={paths} texture={texture || null} hit={hit || null} interactive={interactive} spread={spread} />;
+  }
+
   // Nothing erased: plain strokes - far cheaper for the browser to draw and to repaint while
   // panning or zooming than masks. Soft edges blur the solid colours only; the texture sits on
   // the solid core, so it is painted once and stays sharp.
@@ -651,6 +657,206 @@ function BrushView({
         {edge > 0 && <rect width={w} height={h} fill={el.edge!} mask={`url(#${uid}-e)`} />}
         <rect width={w} height={h} fill={el.color} mask={`url(#${uid}-m)`} />
         {texture && <rect width={w} height={h} fill={`url(#${uid}-p)`} mask={`url(#${uid}-m)`} />}
+      </g>
+      {hit}
+    </>
+  );
+}
+
+// Generated outlines (rough bands, cliff hatching) are cached per points array like the curves,
+// keyed by the parameters that shape them.
+const shapeCache = new WeakMap<[number, number][], Map<string, string>>();
+function cachedShape(points: [number, number][], key: string, make: () => string): string {
+  let m = shapeCache.get(points);
+  if (!m) shapeCache.set(points, (m = new Map()));
+  let d = m.get(key);
+  if (d === undefined) {
+    if (m.size > 8) m.clear();
+    m.set(key, (d = make()));
+  }
+  return d;
+}
+
+type Draw = (op: BrushOp, i: number, paint: string) => React.ReactNode;
+/** Hollow lines (double, rails) end open; a single dab keeps round caps so it stays visible. */
+const openEnds = (o: BrushOp) => (o.points.length > 1 ? "butt" : "round");
+/** The hollow cut runs a little past the ends, so no antialiased hairline closes them. */
+const openCut = (o: BrushOp) => (o.points.length > 1 ? "square" : "round");
+/** One colour of a styled stroke: drawn along every paint pass; `cut` is removed again (hollow lines). */
+interface StylePart {
+  paint: string;
+  draw: Draw;
+  cut?: Draw;
+  /** Uses the wider blur of the edge outline. */
+  outer?: boolean;
+}
+
+/** The colours a line style / rough outline is drawn with, bottom to top. */
+function styleParts(el: BrushElement, paths: string[], textureFill: string | null): StylePart[] {
+  const sp = el.spacing ?? 1;
+  const edgeW = lineTakesEdge(el.line) && el.edge && el.edgeWidth ? el.edgeWidth : 0;
+  const tex = textureFill && lineTakesTexture(el.line) ? textureFill : null;
+  const accent = el.accent || el.color;
+  const parts: StylePart[] = [];
+  const both = (draw: Draw, cut?: Draw) => {
+    parts.push({ paint: el.color, draw, cut });
+    if (tex) parts.push({ paint: tex, draw, cut });
+  };
+  switch (el.line) {
+    case undefined: {
+      // Rough outline: a filled band, outlined by stroking the same shape under it.
+      const rough = el.rough ?? 0;
+      const d = (o: BrushOp, i: number) => cachedShape(o.points, `r${o.size}|${rough}|${el.id}|${i}`, () => roughD(o.points, o.size, rough, opSeed(el, i)));
+      if (edgeW) parts.push({ paint: el.edge!, outer: true, draw: (o, i, c) => <path key={i} d={d(o, i)} fill={c} stroke={c} strokeWidth={round(edgeW * 2)} /> });
+      both((o, i, c) => <path key={i} d={d(o, i)} fill={c} stroke="none" />);
+      break;
+    }
+    case "dashed":
+    case "dotted": {
+      const line = el.line;
+      const da = (o: BrushOp) => dashArray(line, o.size, sp);
+      if (edgeW) parts.push({ paint: el.edge!, outer: true, draw: (o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(o.size + edgeW * 2)} strokeDasharray={da(o)} /> });
+      both((o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(o.size)} strokeDasharray={da(o)} />);
+      break;
+    }
+    case "double":
+      both(
+        (o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(o.size)} strokeLinecap={openEnds(o)} />,
+        (o, i, c) => (o.size > LINE.doubleLine(o.size) * 2 ? <path key={`c${i}`} d={paths[i]} stroke={c} strokeWidth={round(o.size - LINE.doubleLine(o.size) * 2)} strokeLinecap={openCut(o)} /> : null),
+      );
+      break;
+    case "rail":
+      parts.push({
+        paint: accent,
+        draw: (o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(o.size)} strokeLinecap="butt" strokeLinejoin="bevel" strokeDasharray={dashArray("ties", o.size, sp)} />,
+      });
+      parts.push({
+        paint: el.color,
+        draw: (o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(LINE.railGauge(o.size) + LINE.railLine(o.size))} strokeLinecap={openEnds(o)} />,
+        cut: (o, i, c) => (
+          <path key={`c${i}`} d={paths[i]} stroke={c} strokeWidth={round(Math.max(0.1, LINE.railGauge(o.size) - LINE.railLine(o.size)))} strokeLinecap={openCut(o)} />
+        ),
+      });
+      break;
+    case "fence":
+      parts.push({ paint: el.color, draw: (o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(LINE.fenceLine(o.size))} /> });
+      parts.push({
+        paint: accent,
+        draw: (o, i, c) => <path key={i} d={paths[i]} stroke={c} strokeWidth={round(LINE.post(o.size))} strokeLinecap="butt" strokeLinejoin="bevel" strokeDasharray={dashArray("posts", o.size, sp)} />,
+      });
+      break;
+    case "cliff": {
+      const flip = !!el.flipSide;
+      const hatch = (o: BrushOp, i: number) => cachedShape(o.points, `c${o.size}|${sp}|${flip}|${el.id}|${i}`, () => cliffD(o.points, o.size, sp, flip, opSeed(el, i)));
+      parts.push({
+        paint: el.color,
+        draw: (o, i, c) => (
+          <g key={i} stroke={c}>
+            <path d={paths[i]} strokeWidth={round(LINE.cliffLine(o.size))} />
+            <path d={hatch(o, i)} strokeWidth={round(LINE.hatch(o.size))} />
+          </g>
+        ),
+      });
+      break;
+    }
+  }
+  return parts;
+}
+
+/**
+ * A stroke with a line style (dashed, double, rail, fence, cliff…) or a rough outline. Drawn as
+ * plain shapes when possible; with eraser passes, soft edges or hollow styles every colour is
+ * drawn into a mask (white = paint, black = cut / eraser, in order) that reveals a filled box.
+ */
+function StyledBrushView({
+  el,
+  uid,
+  paths,
+  texture,
+  hit,
+  interactive,
+  spread,
+}: {
+  el: BrushElement;
+  uid: string;
+  paths: string[];
+  texture: React.ReactNode;
+  hit: React.ReactNode;
+  interactive?: boolean;
+  spread: number;
+}) {
+  const w = el.width;
+  const h = el.height;
+  const parts = styleParts(el, paths, texture ? `url(#${uid}-p)` : null);
+  const std = round((spread * 2) / 3);
+  const soft = std > 0.2;
+  const hasEdge = parts.some((p) => p.outer);
+  const erased = el.ops.some((o) => o.erase);
+  const base = { fill: "none", strokeLinecap: "round", strokeLinejoin: "round" } as const;
+
+  if (!erased && !soft && !parts.some((p) => p.cut)) {
+    return (
+      <>
+        {texture && <defs>{texture}</defs>}
+        <g pointerEvents={interactive ? "none" : undefined} {...base}>
+          {parts.map((p, k) => (
+            <g key={k}>{el.ops.map((o, i) => (o.erase ? null : p.draw(o, i, p.paint)))}</g>
+          ))}
+        </g>
+        {hit}
+      </>
+    );
+  }
+
+  // Paint passes in runs between eraser passes: a run's hollow cuts apply to the whole run, so
+  // forks and junctions of double lines / rails open into each other.
+  const segments: ({ run: number[] } | { erase: number })[] = [];
+  el.ops.forEach((o, i) => {
+    const last = segments[segments.length - 1];
+    if (o.erase) segments.push({ erase: i });
+    else if (last && "run" in last) last.run.push(i);
+    else segments.push({ run: [i] });
+  });
+  const maskOf = (p: StylePart) =>
+    segments.map((sg, k) =>
+      "erase" in sg ? (
+        <path key={`e${k}`} d={paths[sg.erase]} stroke="#000" strokeWidth={el.ops[sg.erase].size} />
+      ) : (
+        <g key={`r${k}`}>
+          {sg.run.map((i) => p.draw(el.ops[i], i, "#fff"))}
+          {p.cut && sg.run.map((i) => p.cut!(el.ops[i], i, "#000"))}
+        </g>
+      ),
+    );
+  const filterOf = (p: StylePart) => (soft ? `url(#${uid}-${p.outer || !hasEdge ? "f" : "fi"})` : undefined);
+  return (
+    <>
+      <defs>
+        {soft && (
+          <>
+            <filter id={`${uid}-f`} filterUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+              <feGaussianBlur stdDeviation={std} />
+            </filter>
+            {hasEdge && (
+              <filter id={`${uid}-fi`} filterUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+                <feGaussianBlur stdDeviation={round(std * 0.35)} />
+              </filter>
+            )}
+          </>
+        )}
+        {parts.map((p, k) => (
+          <mask key={k} id={`${uid}-m${k}`} maskUnits="userSpaceOnUse" x={0} y={0} width={w} height={h}>
+            <g {...base} filter={filterOf(p)}>
+              {maskOf(p)}
+            </g>
+          </mask>
+        ))}
+        {texture}
+      </defs>
+      <g pointerEvents={interactive ? "none" : undefined}>
+        {parts.map((p, k) => (
+          <rect key={k} width={w} height={h} fill={p.paint} mask={`url(#${uid}-m${k})`} />
+        ))}
       </g>
       {hit}
     </>
