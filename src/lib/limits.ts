@@ -10,7 +10,7 @@ export const LIMITS = {
     /** Max number of stored files (images) per user. */
     maxUploads: 500,
     /** Max size of one image. */
-    maxUploadBytes: 5 * 1024 * 1024,
+    maxUploadBytes: 50 * 1024 * 1024,
     /** Max total size of all stored files per user. */
     maxStorageBytes: 200 * 1024 * 1024,
   },
