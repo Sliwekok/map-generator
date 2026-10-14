@@ -474,6 +474,14 @@ export default function EditorCanvas() {
     if (s.tool === "text") {
       // Prevent the browser's mousedown focus change from immediately blurring the new textarea.
       e.preventDefault();
+      // Clicking (or double-clicking) an existing, editable text edits it instead of adding a new one.
+      const existing = textHit(s.doc, world, 4 / s.view.zoom);
+      if (existing) {
+        s.setTool("select");
+        s.select([existing]);
+        s.setEditingText(existing);
+        return;
+      }
       const el = makeText(world, t("editor.defaultText"), Math.max(16, Math.round(s.doc.grid.size * 0.45)));
       s.addElements([el]);
       s.setTool("select");
@@ -1080,8 +1088,8 @@ export default function EditorCanvas() {
         <g transform={`translate(${view.x} ${view.y}) scale(${z})`}>
 
           <g ref={selOverlayRef}>
-            {/* per-element outlines */}
-            {selectedEls.map((el) => (
+            {/* per-element outlines (not for the text being edited - the textarea has its own outline) */}
+            {selectedEls.filter((el) => el.id !== editing?.id).map((el) => (
               <polygon
                 key={el.id}
                 points={corners(el).map((p) => `${p.x},${p.y}`).join(" ")}
@@ -1248,6 +1256,22 @@ function hitTest(doc: MapContent, p: Pt): string | null {
   return null;
 }
 
+/** Top-most text item under the point that can be edited (visible + unlocked item and layer). */
+function textHit(doc: MapContent, p: Pt, pad: number): string | null {
+  for (const layerId of [...LAYER_ORDER].reverse()) {
+    const ls = doc.layers.find((l) => l.id === layerId);
+    if (ls && (!ls.visible || ls.locked)) continue;
+    for (let i = doc.elements.length - 1; i >= 0; i--) {
+      const el = doc.elements[i];
+      if (el.layer !== layerId || el.type !== "text" || el.locked) continue;
+      const local = el.rotation ? rotatePt(p, center(el), -el.rotation) : p;
+      if (local.x >= el.x - pad && local.x <= el.x + el.width + pad && local.y >= el.y - pad && local.y <= el.y + el.height + pad)
+        return el.id;
+    }
+  }
+  return null;
+}
+
 function cellCenter(p: Pt, g: number): Pt {
   return { x: Math.floor(p.x / g) * g + g / 2, y: Math.floor(p.y / g) * g + g / 2 };
 }
@@ -1279,19 +1303,34 @@ function TextEditorOverlay({ el, view }: { el: TextElement; view: View }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState(el.text);
   const done = useRef(false);
+  const started = useRef(false);
+  const pendingFinish = useRef<number | null>(null);
 
   useEffect(() => {
-    useEditor.getState().beginGesture();
+    // React Strict Mode (next dev) runs effect → cleanup → effect on mount. Finishing in the first
+    // cleanup closed the editor straight away, so the cleanup only schedules the finish and a
+    // re-run of the effect cancels it; on a real unmount it runs.
+    if (pendingFinish.current !== null) {
+      clearTimeout(pendingFinish.current);
+      pendingFinish.current = null;
+    }
+    if (!started.current) {
+      started.current = true;
+      useEditor.getState().beginGesture();
+    }
     const raf = requestAnimationFrame(() => {
       const ta = ref.current;
-      if (ta) {
+      if (ta && document.activeElement !== ta) {
         ta.focus();
         ta.select();
       }
     });
     return () => {
       cancelAnimationFrame(raf);
-      if (!done.current) finish(true);
+      pendingFinish.current = window.setTimeout(() => {
+        pendingFinish.current = null;
+        if (!done.current) finish(true);
+      }, 0);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1334,12 +1373,12 @@ function TextEditorOverlay({ el, view }: { el: TextElement; view: View }) {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) finish(true);
       }}
       onPointerDown={(e) => e.stopPropagation()}
-      className="absolute z-10 resize-none overflow-hidden rounded bg-white/85 p-0 outline-2 outline-amber-500"
+      className="absolute z-10 resize-none overflow-hidden rounded bg-white/15 p-0 outline-2 outline-amber-500"
       style={{
         left: el.x * z + view.x,
         top: el.y * z + view.y,
-        width: Math.max(60, (el.width + el.fontSize) * z),
-        height: Math.max(24, (el.height + el.fontSize * 0.3) * z),
+        width: (el.width + el.fontSize) * z,
+        height: (el.height + el.fontSize * 0.3) * z,
         fontSize: el.fontSize * z,
         lineHeight: LINE_HEIGHT,
         fontFamily: FONT_STACKS[el.fontFamily],

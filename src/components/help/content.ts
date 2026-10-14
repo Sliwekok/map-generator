@@ -162,7 +162,7 @@ export const HELP_EN: HelpSection[] = [
     blocks: [
       {
         list: [
-          "Text (T) — click to place a label, then type. Double-click a label to edit it. Font (Serif, Sans, Mono, Fantasy), size, bold, italic, colour and a readability halo are in Properties.",
+          "Text (T) — click an empty spot to place a label, then type. Double-click an existing label to edit it (with the Text tool active, a single click on it is enough). Font (Serif, Sans, Mono, Fantasy), size, bold, italic, colour and a readability halo are in Properties.",
           "Rectangle (R) and Ellipse (O) — drag to draw areas such as rooms, lakes or zones of effect. Shift draws a square/circle. Fill, fill opacity, outline, outline width and (for rectangles) corner radius are in Properties.",
           "Freehand / walls (P) — draw thin lines such as cave walls or borders. Hold Shift for a straight line. Tick “Closed shape” in Properties to close a path and fill it.",
           "Brush (B) and Eraser (X) — paint rivers, roads, paths and terrain by hand with a colour or a texture. See “Painting with the brush” below.",
@@ -475,7 +475,7 @@ export const HELP_PL: HelpSection[] = [
     blocks: [
       {
         list: [
-          "Tekst (T) — kliknij, aby dodać napis, i pisz. Kliknij dwukrotnie napis, aby go edytować. Czcionka (szeryfowa, bezszeryfowa, o stałej szerokości, fantasy), rozmiar, pogrubienie, kursywa, kolor i poświata poprawiająca czytelność są we Właściwościach.",
+          "Tekst (T) — kliknij puste miejsce, aby dodać napis, i pisz. Kliknij dwukrotnie istniejący napis, aby go edytować (przy aktywnym narzędziu Tekst wystarczy jedno kliknięcie). Czcionka (szeryfowa, bezszeryfowa, o stałej szerokości, fantasy), rozmiar, pogrubienie, kursywa, kolor i poświata poprawiająca czytelność są we Właściwościach.",
           "Prostokąt (R) i Elipsa (O) — przeciągnij, aby narysować pomieszczenia, jeziora czy obszary działania czarów. Shift rysuje kwadrat/koło. Wypełnienie, krycie wypełnienia, obrys, grubość obrysu i (dla prostokątów) zaokrąglenie narożników są we Właściwościach.",
           "Rysowanie / ściany (P) — rysuj cienkie linie, np. ściany jaskiń lub granice. Shift rysuje linię prostą. Zaznacz „Kształt zamknięty” we Właściwościach, aby zamknąć ścieżkę i ją wypełnić.",
           "Pędzel (B) i Gumka (X) — maluj ręcznie rzeki, drogi, ścieżki i teren kolorem albo teksturą. Szczegóły w części „Malowanie pędzlem” poniżej.",
