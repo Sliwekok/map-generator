@@ -47,6 +47,29 @@ export interface AssetElement extends ElementBase {
   type: "asset";
   assetId: string; // built-in id, or "u:<uploadId>" for user uploads
   tint?: string; // replaces currentColor in tintable assets
+  /** Parts hidden with the eraser (and painted back with its restore mode). The image itself is never changed. */
+  mask?: GraphicMask;
+}
+
+/**
+ * One eraser pass over a graphic: `erase` hides, otherwise it restores what earlier passes
+ * hid. Points are the centre line in mask coordinates; `soft` is the feathered edge in px.
+ */
+export interface MaskOp {
+  erase?: true;
+  size: number;
+  soft?: number;
+  points: [number, number][];
+}
+
+/**
+ * Erased parts of an uploaded image or library graphic. `w` × `h` is the item size the points
+ * refer to; the mask is drawn scaled to the current size, so resizing the item keeps it in place.
+ */
+export interface GraphicMask {
+  w: number;
+  h: number;
+  ops: MaskOp[];
 }
 
 export interface ShapeElement extends ElementBase {

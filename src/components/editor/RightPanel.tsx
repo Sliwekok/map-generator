@@ -10,7 +10,7 @@ import { relayoutText } from "@/lib/editor/text";
 import { LAYER_ORDER, type LayerId, type MapElement, type TextElement } from "@/lib/types";
 import { Icon } from "@/components/ui/Icon";
 import { Button, ColorField, cx, IconButton, Label, NumberField, Segmented, Slider } from "@/components/ui/controls";
-import { BrushProps, BrushToolPanel } from "./BrushPanel";
+import { BrushProps, BrushToolPanel, GraphicMaskProps } from "./BrushPanel";
 import { PopupMenu, type MenuItem } from "./ContextMenu";
 import { RENAME_EVENT, useItemLabel } from "@/lib/editor/itemLabel";
 import { LIMITS } from "@/lib/limits";
@@ -295,21 +295,24 @@ function TypeProps({ el }: { el: MapElement }) {
 
   if (el.type === "asset") {
     const def = assets[el.assetId];
-    if (!def?.tintable) return null;
+    if (!def?.tintable) return <GraphicMaskProps el={el} />;
     return (
-      <Section title={t("editor.props.tint")}>
-        <div className="flex items-center gap-2">
-          <ColorField value={el.tint ?? def.defaultTint ?? "#444444"} onChange={(c) => upd((e) => ({ ...e, tint: c }))} />
-          <Button className="px-2 py-1 text-xs" onClick={() => upd((e) => ({ ...e, tint: undefined }))}>
-            {t("editor.props.resetTint")}
-          </Button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {["#2f6fd6", "#c0392b", "#27ae60", "#8e44ad", "#f1c40f", "#e67e22", "#7f8c8d", "#111111"].map((c) => (
-            <button key={c} onClick={() => upd((e) => ({ ...e, tint: c }))} className="h-6 w-6 rounded-full ring-1 ring-slate-600" style={{ background: c }} />
-          ))}
-        </div>
-      </Section>
+      <>
+        <Section title={t("editor.props.tint")}>
+          <div className="flex items-center gap-2">
+            <ColorField value={el.tint ?? def.defaultTint ?? "#444444"} onChange={(c) => upd((e) => ({ ...e, tint: c }))} />
+            <Button className="px-2 py-1 text-xs" onClick={() => upd((e) => ({ ...e, tint: undefined }))}>
+              {t("editor.props.resetTint")}
+            </Button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {["#2f6fd6", "#c0392b", "#27ae60", "#8e44ad", "#f1c40f", "#e67e22", "#7f8c8d", "#111111"].map((c) => (
+              <button key={c} onClick={() => upd((e) => ({ ...e, tint: c }))} className="h-6 w-6 rounded-full ring-1 ring-slate-600" style={{ background: c }} />
+            ))}
+          </div>
+        </Section>
+        <GraphicMaskProps el={el} />
+      </>
     );
   }
   if (el.type === "rect" || el.type === "ellipse") {

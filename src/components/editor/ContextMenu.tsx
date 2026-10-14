@@ -11,6 +11,7 @@ import { Icon } from "@/components/ui/Icon";
 import { cx } from "@/components/ui/controls";
 import type { Pt } from "@/lib/editor/geometry";
 import { requestRename, useItemLabel } from "@/lib/editor/itemLabel";
+import { clearMask, isGraphic } from "@/lib/editor/mask";
 
 export interface ContextMenuState {
   /** Viewport (client) coordinates where the menu opens. */
@@ -136,6 +137,21 @@ export default function ContextMenu({ menu, onClose }: { menu: ContextMenuState;
         disabled: noEdit,
         run: () => s().setEditingText(single.id),
       });
+    }
+
+    // Images / library graphics: erase parts of them (eraser on the selection), or show it all again.
+    const graphics = editable.filter(isGraphic);
+    if (graphics.length) {
+      out.push({ kind: "action", label: t("editor.brush.eraseParts"), icon: "eraser", hint: "X", run: () => s().setTool("eraser") });
+      const erased = graphics.filter((g) => g.mask);
+      if (erased.length) {
+        out.push({
+          kind: "action",
+          label: t("editor.ctx.restoreErased"),
+          icon: "undo",
+          run: () => s().updateElements(erased.map((g) => g.id), (e) => (e.type === "asset" ? clearMask(e) : e)),
+        });
+      }
     }
 
     out.push(

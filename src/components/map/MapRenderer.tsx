@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import type { AssetDef, BrushElement, LayerId, LayerState, MapContent, MapElement, PatternDef } from "@/lib/types";
+import type { AssetDef, BrushElement, GraphicMask, LayerId, LayerState, MapContent, MapElement, PatternDef } from "@/lib/types";
 import { LAYER_ORDER } from "@/lib/types";
 import { FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { pathD } from "@/lib/editor/geometry";
@@ -375,6 +375,7 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
           </g>
         );
       }
+      if (el.mask?.ops.length) content = <Masked mask={el.mask} uid={`${idPrefix}-${el.id}-gm`} w={w} h={h}>{content}</Masked>;
       break;
     case "rect":
       content = (
@@ -471,6 +472,59 @@ export const ElementView = memo(function ElementView({ el, idPrefix = "m", inter
     </g>
   );
 });
+
+// Mask path data, cached per points array like the brush strokes.
+const maskCache = new WeakMap<[number, number][], string>();
+function cachedMaskD(points: [number, number][]): string {
+  let d = maskCache.get(points);
+  if (d === undefined) maskCache.set(points, (d = smoothD(points)));
+  return d;
+}
+
+/**
+ * A graphic with parts erased: drawn through a mask - white everywhere, then each pass in
+ * order (black = erased, white = painted back), soft passes blurred. The mask is recorded in
+ * its own units (`mask.w` × `mask.h`) and scaled to the item, so resizing keeps it in place.
+ * Its area reaches well past the item box so shadows drawn outside the box stay visible.
+ */
+function Masked({ mask, uid, w, h, children }: { mask: GraphicMask; uid: string; w: number; h: number; children: React.ReactNode }) {
+  const sx = w / mask.w;
+  const sy = h / mask.h;
+  // Runs of passes with the same softness share one blur filter (kept in order).
+  const softs = [...new Set(mask.ops.map((o) => o.soft ?? 0).filter((v) => v > 0))];
+  const runs: { soft: number; ops: GraphicMask["ops"] }[] = [];
+  for (const o of mask.ops) {
+    const soft = o.soft ?? 0;
+    const last = runs[runs.length - 1];
+    if (last && last.soft === soft) last.ops.push(o);
+    else runs.push({ soft, ops: [o] });
+  }
+  const fx = -mask.w, fy = -mask.h, fw = mask.w * 3, fh = mask.h * 3;
+  return (
+    <>
+      <defs>
+        {softs.map((v, i) => (
+          <filter key={v} id={`${uid}-f${i}`} filterUnits="userSpaceOnUse" x={fx} y={fy} width={fw} height={fh}>
+            <feGaussianBlur stdDeviation={round((v * 2) / 3)} />
+          </filter>
+        ))}
+        <mask id={uid} maskUnits="userSpaceOnUse" x={-w} y={-h} width={w * 3} height={h * 3}>
+          <rect x={-w} y={-h} width={w * 3} height={h * 3} fill="#fff" />
+          <g transform={sx !== 1 || sy !== 1 ? `scale(${sx} ${sy})` : undefined} fill="none" strokeLinecap="round" strokeLinejoin="round">
+            {runs.map((run, i) => (
+              <g key={i} filter={run.soft ? `url(#${uid}-f${softs.indexOf(run.soft)})` : undefined}>
+                {run.ops.map((o, j) => (
+                  <path key={j} d={cachedMaskD(o.points)} stroke={o.erase ? "#000" : "#fff"} strokeWidth={o.size} />
+                ))}
+              </g>
+            ))}
+          </g>
+        </mask>
+      </defs>
+      <g mask={`url(#${uid})`}>{children}</g>
+    </>
+  );
+}
 
 /**
  * A painted element. Without eraser passes it is plain SVG strokes: edge colour, then paint

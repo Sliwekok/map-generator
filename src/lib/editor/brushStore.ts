@@ -41,6 +41,8 @@ function sanitize(b: BrushSettings): BrushSettings {
     layer: LAYER_ORDER.includes(b.layer) ? b.layer : d.layer,
     merge: typeof b.merge === "boolean" ? b.merge : d.merge,
     eraserSize: clamp(b.eraserSize, BRUSH_LIMITS.size[0], BRUSH_LIMITS.size[1], d.eraserSize),
+    eraserSoftness: clamp(b.eraserSoftness, 0, 1, d.eraserSoftness),
+    eraserRestore: typeof b.eraserRestore === "boolean" ? b.eraserRestore : d.eraserRestore,
   };
 }
 

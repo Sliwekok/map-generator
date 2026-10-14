@@ -24,6 +24,10 @@ export interface BrushSettings {
   layer: LayerId;
   merge: boolean; // continue a stroke of the same brush instead of starting a new item
   eraserSize: number; // cells
+  /** Soft edge of the eraser on images / graphics (0..1). */
+  eraserSoftness: number;
+  /** The eraser paints erased parts of the selected graphics back instead of erasing. */
+  eraserRestore: boolean;
 }
 
 export const DEFAULT_BRUSH: BrushSettings = {
@@ -40,6 +44,8 @@ export const DEFAULT_BRUSH: BrushSettings = {
   layer: "terrain",
   merge: true,
   eraserSize: 0.8,
+  eraserSoftness: 0,
+  eraserRestore: false,
 };
 
 export interface BrushPreset {
@@ -197,11 +203,19 @@ export function erasePass(el: BrushElement, worldPts: [number, number][], size: 
     const l = toLocal(el, { x, y });
     return [r1(l.x), r1(l.y)] as [number, number];
   });
-  const m = size / 2 + 1;
-  // A point is kept when a segment it belongs to passes near the element.
-  const keep = local.map((p) => (local.length === 1 ? crosses(p, p, el, m) : false));
+  const runs = runsNear(local, el.width, el.height, size / 2 + 1);
+  if (!runs.length) return el;
+  return capOps({ ...el, ops: [...el.ops, ...runs.map((points) => ({ erase: true as const, size, points }))] });
+}
+
+/**
+ * Parts of a local polyline that pass within `m` of the box 0..w × 0..h, one run per stretch
+ * that stays near it (a point is kept when a segment it belongs to passes near the box).
+ */
+export function runsNear(local: [number, number][], w: number, h: number, m: number): [number, number][][] {
+  const keep = local.map((p) => (local.length === 1 ? crosses(p, p, w, h, m) : false));
   for (let i = 0; i < local.length - 1; i++) {
-    if (crosses(local[i], local[i + 1], el, m)) keep[i] = keep[i + 1] = true;
+    if (crosses(local[i], local[i + 1], w, h, m)) keep[i] = keep[i + 1] = true;
   }
   const runs: [number, number][][] = [];
   let run: [number, number][] = [];
@@ -213,14 +227,13 @@ export function erasePass(el: BrushElement, worldPts: [number, number][], size: 
     }
   }
   if (run.length) runs.push(run);
-  if (!runs.length) return el;
-  return capOps({ ...el, ops: [...el.ops, ...runs.map((points) => ({ erase: true as const, size, points }))] });
+  return runs;
 }
 
-/** Does the segment a-b pass through the element box (grown by m)? */
-function crosses(a: [number, number], b: [number, number] | undefined, el: BrushElement, m: number): boolean {
+/** Does the segment a-b pass through the box 0..w × 0..h (grown by m)? */
+function crosses(a: [number, number], b: [number, number] | undefined, w: number, h: number, m: number): boolean {
   if (!b) return false;
-  const x1 = -m, y1 = -m, x2 = el.width + m, y2 = el.height + m;
+  const x1 = -m, y1 = -m, x2 = w + m, y2 = h + m;
   if (Math.max(a[0], b[0]) < x1 || Math.min(a[0], b[0]) > x2 || Math.max(a[1], b[1]) < y1 || Math.min(a[1], b[1]) > y2) return false;
   // Liang-Barsky clip test
   let t0 = 0, t1 = 1;

@@ -8,7 +8,9 @@ import { useUploads } from "@/lib/client/uploads";
 import { useEditor } from "@/lib/editor/store";
 import { useBrush, BRUSH_LIMITS } from "@/lib/editor/brushStore";
 import { BRUSH_PRESETS, brushPx, mainSize, presetSettings, resizePasses, restyleBrush, type BrushPreset } from "@/lib/editor/brush";
-import { LAYER_ORDER, type BrushElement, type LayerId, type MapElement, type PatternDef } from "@/lib/types";
+import { clearMask, eraserTargets, erasedPasses } from "@/lib/editor/mask";
+import { useItemLabel } from "@/lib/editor/itemLabel";
+import { LAYER_ORDER, type AssetElement, type BrushElement, type LayerId, type MapElement, type PatternDef } from "@/lib/types";
 import FileBrowser from "@/components/files/FileBrowser";
 import { Icon } from "@/components/ui/Icon";
 import { Button, ColorField, cx, Label, NumberField, Segmented, Slider } from "@/components/ui/controls";
@@ -56,7 +58,7 @@ export function BrushToolPanel() {
         <Section title={t("editor.brush.size")} right={<span className="text-[11px] text-slate-400">{cells(b.eraserSize)}</span>}>
           <SizeControl value={b.eraserSize} onChange={(v) => set({ eraserSize: v })} />
         </Section>
-        <p className="mb-4 text-xs leading-relaxed text-slate-400">{t("editor.brush.eraserHint")}</p>
+        <GraphicEraser />
         <Button className="w-full" onClick={() => useEditor.getState().setTool("brush")}>
           <Icon name="brush" size={16} /> {t("editor.brush.backToBrush")}
         </Button>
@@ -128,6 +130,100 @@ export function BrushToolPanel() {
       </label>
       <p className="text-[11px] leading-relaxed text-slate-500">{t("editor.brush.hint")}</p>
     </div>
+  );
+}
+
+/**
+ * Eraser settings for the selected images / graphics (erase or paint back, softness), or the
+ * hint for brush strokes when no graphic is selected.
+ */
+function GraphicEraser() {
+  const { t } = useI18n();
+  const doc = useEditor((s) => s.doc);
+  const selection = useEditor((s) => s.selection);
+  const b = useBrush((s) => s.settings);
+  const set = useBrush((s) => s.set);
+  const label = useItemLabel();
+  const { graphics, editable } = eraserTargets(doc, selection);
+
+  if (!graphics.length) {
+    return (
+      <>
+        <p className="mb-2 text-xs leading-relaxed text-slate-400">{t("editor.brush.eraserHint")}</p>
+        <p className="mb-4 text-xs leading-relaxed text-slate-500" data-testid="eraser-graphic-hint">
+          {t("editor.brush.eraserGraphicHint")}
+        </p>
+      </>
+    );
+  }
+  const erased = editable.reduce((n, g) => n + erasedPasses(g), 0);
+  return (
+    <div data-testid="eraser-graphics">
+      <div className="mb-3 rounded-lg bg-slate-800 p-2 ring-1 ring-slate-700">
+        <div className="text-[11px] uppercase tracking-wide text-slate-500">{t("editor.brush.eraserTarget")}</div>
+        <div className="truncate text-sm text-slate-200" data-testid="eraser-target">
+          {graphics.length === 1 ? label(graphics[0]).name : t("editor.brush.eraserTargets", { n: graphics.length })}
+        </div>
+        {editable.length < graphics.length && (
+          <p className="mt-1 text-[11px] text-red-300">{t("editor.brush.eraserSomeLocked", { n: graphics.length - editable.length })}</p>
+        )}
+      </div>
+      <Section title={t("editor.brush.eraserMode")}>
+        <Segmented
+          value={b.eraserRestore ? "restore" : "erase"}
+          options={[
+            { value: "erase", label: t("editor.brush.modeErase") },
+            { value: "restore", label: t("editor.brush.modeRestore") },
+          ]}
+          onChange={(v) => set({ eraserRestore: v === "restore" })}
+        />
+      </Section>
+      <Section title={t("editor.brush.softness")} right={<Pct v={b.eraserSoftness} />}>
+        <Slider value={b.eraserSoftness} onChange={(v) => set({ eraserSoftness: v })} />
+      </Section>
+      <p className="mb-3 text-xs leading-relaxed text-slate-400">{t("editor.brush.eraserGraphicsHint")}</p>
+      <div className="mb-3 flex flex-col gap-2">
+        {erased > 0 && (
+          <Button
+            className="w-full"
+            onClick={() => {
+              const ids = new Set(editable.map((g) => g.id));
+              useEditor.getState().updateElements([...ids], (e) => (e.type === "asset" ? clearMask(e) : e));
+            }}
+            data-testid="graphic-restore-all"
+          >
+            <Icon name="undo" size={16} /> {t("editor.brush.restoreGraphic", { n: erased })}
+          </Button>
+        )}
+        <Button className="w-full" onClick={() => useEditor.getState().select([])} data-testid="eraser-deselect">
+          <Icon name="x" size={16} /> {t("editor.brush.eraseStrokesInstead")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Properties of a selected image / graphic: erase parts of it, or show everything again. */
+export function GraphicMaskProps({ el }: { el: AssetElement }) {
+  const { t } = useI18n();
+  const erased = erasedPasses(el);
+  return (
+    <Section title={t("editor.brush.erasedParts")}>
+      <div className="flex flex-col gap-2">
+        <Button className="w-full" onClick={() => useEditor.getState().setTool("eraser")} data-testid="graphic-erase">
+          <Icon name="eraser" size={16} /> {t("editor.brush.eraseParts")}
+        </Button>
+        {erased > 0 && (
+          <Button
+            className="w-full"
+            onClick={() => useEditor.getState().updateElements([el.id], (e) => (e.type === "asset" ? clearMask(e) : e))}
+            data-testid="graphic-restore"
+          >
+            <Icon name="undo" size={16} /> {t("editor.brush.restoreGraphic", { n: erased })}
+          </Button>
+        )}
+      </div>
+    </Section>
   );
 }
 

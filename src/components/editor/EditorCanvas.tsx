@@ -26,13 +26,14 @@ import { relayoutText, FONT_STACKS, LINE_HEIGHT } from "@/lib/editor/text";
 import { uploadFiles } from "@/lib/editor/actions";
 import { addPass, brushElement, brushPx, erasePass, fullyErased, mergeTarget, smoothStroke, styleFrom, type BrushStyle } from "@/lib/editor/brush";
 import { useBrush } from "@/lib/editor/brushStore";
+import { eraserTargets, maskFeather, maskHasRoom, maskPass } from "@/lib/editor/mask";
 import { toast } from "@/lib/client/toasts";
 import { useAssets } from "@/lib/client/assets";
 import { useUploadMap, useUploads } from "@/lib/client/uploads";
 import { useSession } from "@/lib/client/session";
 import { useI18n } from "@/lib/i18n";
 import { FEET_PER_CELL } from "@/lib/limits";
-import { LAYER_ORDER, type BrushElement, type MapContent, type MapElement, type TextElement } from "@/lib/types";
+import { LAYER_ORDER, type AssetElement, type BrushElement, type MapContent, type MapElement, type TextElement } from "@/lib/types";
 import ContextMenu, { type ContextMenuState } from "./ContextMenu";
 
 export const ASSET_MIME = "application/x-mapforge-asset";
@@ -95,6 +96,15 @@ type Gesture =
       frame: number; // pending requestAnimationFrame (0 = none)
     }
   | { kind: "erase"; raw: [number, number][]; size: number; base: Map<string, BrushElement>; frame: number }
+  | {
+      kind: "mask"; // eraser / restore on the selected graphics
+      raw: [number, number][];
+      size: number;
+      soft: number; // px
+      erase: boolean; // false = paint erased parts back
+      base: Map<string, AssetElement>; // the graphics as they were before this stroke
+      frame: number;
+    }
   | { kind: "measure"; start: Pt };
 
 /** Last point of the previous brush stroke - Shift+click draws a straight line from it. */
@@ -141,6 +151,7 @@ export default function EditorCanvas() {
   const view = useEditor((s) => s.view);
   const selection = useEditor((s) => s.selection);
   const tool = useEditor((s) => s.tool);
+  const eraserRestore = useBrush((s) => s.settings.eraserRestore);
   const showGrid = useEditor((s) => s.showGrid);
   const editingTextId = useEditor((s) => s.editingTextId);
 
@@ -370,7 +381,34 @@ export default function EditorCanvas() {
       return;
     }
     if (s.tool === "eraser") {
-      const size = brushPx(useBrush.getState().settings.eraserSize, s.doc.grid.size || 70);
+      const b = useBrush.getState().settings;
+      const size = brushPx(b.eraserSize, s.doc.grid.size || 70);
+      // Selected images / library graphics: the eraser works on those only.
+      const targets = eraserTargets(s.doc, s.selection);
+      if (targets.graphics.length) {
+        if (!targets.editable.length) {
+          toast(t("editor.brush.graphicLocked"), "error");
+          return;
+        }
+        if (!targets.editable.every(maskHasRoom)) {
+          toast(t("editor.brush.maskFull"), "error");
+          return;
+        }
+        s.beginGesture();
+        const g: Gesture = {
+          kind: "mask",
+          raw: [[world.x, world.y]],
+          size,
+          soft: maskFeather(b.eraserSoftness, size),
+          // Alt swaps erase / restore for this stroke.
+          erase: b.eraserRestore === e.altKey,
+          base: new Map(targets.editable.map((el) => [el.id, el])),
+          frame: 0,
+        };
+        gesture.current = g;
+        maskStep(g, s.view.zoom);
+        return;
+      }
       s.beginGesture();
       const g: Gesture = { kind: "erase", raw: [[world.x, world.y]], size, base: new Map(), frame: 0 };
       gesture.current = g;
@@ -574,14 +612,17 @@ export default function EditorCanvas() {
         }
         break;
       }
-      case "erase": {
+      case "erase":
+      case "mask": {
         const last = g.raw[g.raw.length - 1];
         if (Math.hypot(world.x - last[0], world.y - last[1]) * s.view.zoom < 1.5) return;
         g.raw.push([world.x, world.y]);
         if (!g.frame) {
           g.frame = requestAnimationFrame(() => {
             g.frame = 0;
-            eraseStep(g, useEditor.getState().view.zoom);
+            const zoom = useEditor.getState().view.zoom;
+            if (g.kind === "mask") maskStep(g, zoom);
+            else eraseStep(g, zoom);
           });
         }
         break;
@@ -626,6 +667,21 @@ export default function EditorCanvas() {
     if (!ids.length) return;
     const pts = smoothStroke(g.raw, g.size, 0.2, zoom);
     s.updateElements(ids, (el) => (el.type === "brush" ? erasePass(g.base.get(el.id)!, pts, g.size) : el), { history: false });
+  };
+
+  /** Applies the eraser / restore stroke to the selected graphics (only those it changes). */
+  const maskStep = (g: Extract<Gesture, { kind: "mask" }>, zoom: number) => {
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const pts = smoothStroke(g.raw, g.size, 0.2, zoom);
+    const next = new Map<string, AssetElement>();
+    for (const el of s.doc.elements) {
+      const base = g.base.get(el.id);
+      if (!base) continue;
+      const m = maskPass(base, pts, g.size, g.soft, g.erase);
+      if (m !== el) next.set(el.id, m);
+    }
+    if (next.size) s.updateElements([...next.keys()], (el) => next.get(el.id) ?? el, { history: false });
   };
 
   /** Moves the dragged items' layer and the selection outline (directly - no re-render per move). */
@@ -715,6 +771,12 @@ export default function EditorCanvas() {
           s.setDoc((d) => ({ ...d, elements: d.elements.filter((x) => !del.has(x.id)) }), { history: false });
           s.select(s.selection.filter((id) => !del.has(id)));
         }
+        s.endGesture();
+        break;
+      }
+      case "mask": {
+        if (g.frame) cancelAnimationFrame(g.frame);
+        maskStep(g, s.view.zoom);
         s.endGesture();
         break;
       }
@@ -832,6 +894,8 @@ export default function EditorCanvas() {
   const cursor =
     panning ? "grabbing" : spaceDown || tool === "pan" ? "grab" : tool === "text" ? "text" : tool === "select" ? "default" : "crosshair";
   const painting = (tool === "brush" || tool === "eraser") && !spaceDown;
+  // Eraser on selected graphics: green outline while it paints erased parts back.
+  const restoring = tool === "eraser" && eraserRestore && selectedEls.some((el) => el.type === "asset");
 
   return (
     <div
@@ -1050,7 +1114,7 @@ export default function EditorCanvas() {
               ref={ringRef}
               visibility="hidden"
               fill={tool === "eraser" ? "rgba(255,255,255,0.12)" : "none"}
-              stroke={tool === "eraser" ? "#f87171" : "#fbbf24"}
+              stroke={restoring ? "#4ade80" : tool === "eraser" ? "#f87171" : "#fbbf24"}
               strokeWidth={1.5 / z}
               strokeDasharray={tool === "eraser" ? `${4 / z} ${3 / z}` : undefined}
               data-testid="brush-ring"

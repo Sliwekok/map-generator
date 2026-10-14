@@ -2,11 +2,13 @@ import {
   LAYER_ORDER,
   type BackgroundSettings,
   type BrushOp,
+  type GraphicMask,
   type GridSettings,
   type LayerId,
   type LayerState,
   type MapContent,
   type MapElement,
+  type MaskOp,
 } from "./types";
 import { DEFAULT_GRID_SIZE, LIMITS } from "./limits";
 import { cleanItemName } from "./itemName";
@@ -98,6 +100,7 @@ function sanitizeElement(raw: unknown): MapElement | null {
         type: "asset",
         assetId: r.assetId,
         tint: r.tint ? color(r.tint, "#000000") : undefined,
+        mask: sanitizeMask(r.mask),
       };
     }
     case "rect":
@@ -179,6 +182,36 @@ function sanitizeElement(raw: unknown): MapElement | null {
     default:
       return null;
   }
+}
+
+/** Erased parts of a graphic. Dropped when nothing in it erases anything. */
+function sanitizeMask(raw: unknown): GraphicMask | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  if (!Array.isArray(r.ops)) return undefined;
+  const B = LIMITS.brush;
+  const ops: MaskOp[] = [];
+  let total = 0;
+  for (const o of r.ops.slice(0, B.maxOps)) {
+    if (!o || typeof o !== "object" || !Array.isArray((o as MaskOp).points)) continue;
+    const op = o as Record<string, unknown>;
+    const points: [number, number][] = [];
+    for (const p of (op.points as unknown[]).slice(0, Math.min(B.maxOpPoints, B.maxPoints - total))) {
+      if (Array.isArray(p) && p.length === 2) points.push([num(p[0], -BIG, BIG, 0), num(p[1], -BIG, BIG, 0)]);
+    }
+    if (!points.length) continue;
+    total += points.length;
+    const soft = num(op.soft, 0, B.maxSize, 0);
+    ops.push({
+      ...(op.erase === true ? { erase: true as const } : {}),
+      size: num(op.size, 0.5, B.maxSize, 20),
+      ...(soft > 0 ? { soft } : {}),
+      points,
+    });
+    if (total >= B.maxPoints) break;
+  }
+  if (!ops.some((o) => o.erase)) return undefined;
+  return { w: num(r.w, 1, BIG, 100), h: num(r.h, 1, BIG, 100), ops };
 }
 
 /** Returns a clean MapContent or throws an Error with a message. */
