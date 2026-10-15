@@ -6,4 +6,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: { "/*": ["./assets/**/*"] },
 };
 
+module.exports = {
+  allowedDevOrigins: ['dominiksliwek.duckdns.org'],
+}
+
 export default nextConfig;
