@@ -54,7 +54,11 @@
     "h-obelisk": {"name": {"en": "Obsidian obelisk", "pl": "Obsydianowy obelisk"}, "tags": ["obelisk", "monolith", "pillar", "runes", "obsidian", "obelisk", "monolit", "runy", "obsydian"]},
     "h-portal": {"name": {"en": "Hell rift", "pl": "Piekielna szczelina"}, "cells": [2, 2], "tags": ["portal", "rift", "gate", "vortex", "hell", "portal", "szczelina", "wir", "piekło"]},
     "h-impaled-skull": {"name": {"en": "Skull on a spike", "pl": "Czaszka na palu"}, "cells": [0.5, 0.5], "tags": ["skull", "spike", "pike", "warning", "czaszka", "pal", "ostrzeżenie"]},
-    "h-sigil": {"name": {"en": "Demon sigil", "pl": "Demoniczna pieczęć"}, "defaultTint": "#ff3a1a", "tags": ["sigil", "seal", "rune", "occult", "demon", "marker", "pieczęć", "runa", "znak", "demon"]}
+    "h-sigil": {"name": {"en": "Demon sigil", "pl": "Demoniczna pieczęć"}, "defaultTint": "#ff3a1a", "tags": ["sigil", "seal", "rune", "occult", "demon", "marker", "pieczęć", "runa", "znak", "demon"]},
+    "h-blood-river": {"name": {"en": "Blood river", "pl": "Rzeka krwi"}, "cells": [2, 4], "tags": ["blood", "river", "stream", "water", "hell", "krew", "rzeka", "strumień", "piekło"]},
+    "h-blood-river-bend": {"name": {"en": "Blood river bend", "pl": "Zakole rzeki krwi"}, "cells": [3, 3], "tags": ["blood", "river", "bend", "turn", "corner", "hell", "krew", "rzeka", "zakole", "zakręt", "piekło"]},
+    "h-blood-pool": {"name": {"en": "Blood pool", "pl": "Kałuża krwi"}, "cells": [3, 2], "tags": ["blood", "pool", "lake", "pond", "hell", "krew", "kałuża", "jezioro", "staw", "piekło"]},
+    "h-ember-fissures": {"name": {"en": "Glowing fissures", "pl": "Żarzące się szczeliny"}, "cells": [2, 2], "tags": ["crack", "fissure", "glow", "ember", "lava", "decal", "szczelina", "pęknięcie", "żar", "lawa"]}
   },
   "patterns": {
     "h-scorched-earth": {"name": {"en": "Scorched earth", "pl": "Spalona ziemia"}},
@@ -63,6 +67,8 @@
     "h-lava-cracks": {"name": {"en": "Lava-cracked basalt", "pl": "Bazalt z lawą"}},
     "h-brimstone": {"name": {"en": "Brimstone rock", "pl": "Skała siarkowa"}},
     "h-obsidian-tiles": {"name": {"en": "Obsidian tiles", "pl": "Płyty z obsydianu"}},
-    "h-iron-plates": {"name": {"en": "Riveted iron floor", "pl": "Podłoga z nitowanej stali"}}
+    "h-iron-plates": {"name": {"en": "Riveted iron floor", "pl": "Podłoga z nitowanej stali"}},
+    "h-cursed-stone": {"name": {"en": "Cursed stone", "pl": "Przeklęty kamień"}},
+    "h-blood-water": {"name": {"en": "Blood (river)", "pl": "Krew (rzeka)"}}
   }
 }

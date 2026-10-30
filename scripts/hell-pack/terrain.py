@@ -280,6 +280,8 @@ def lava_stream(seed):
                    stroke_dasharray=f"{f(rng.uniform(10, 18))} {f(rng.uniform(6, 12))}"))
     s.add(path(idd, fill="none", stroke=LAVA_CORE, stroke_width="0.8", stroke_opacity="0.7"))
     s.add(embers(s, 10, 10, 80, 280, 18, rng, 0.7))
+    # the editor draws overflow, so keep the chainable ends inside the box
+    s.body = [g(s.body, clip_path=s.clip(rect_d(0, 0, 100, 300)))]
     return s.render()
 
 

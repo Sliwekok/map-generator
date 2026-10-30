@@ -338,6 +338,91 @@ def iron_plates():
     return t
 
 
+# ---------------------------------------------------------------- Cursed stone (grey-violet painted rock, glowing fissures)
+def cursed_stone():
+    t = Tex(308)
+    _glow_defs(t)
+    t.lin([(0, "#e4dcea", 0.3), (0.5, "#e4dcea", 0.0), (0.7, "#000", 0.0), (1, "#1e1828", 0.35)], 0, 0, 1, 1, gid="csTL")
+    rng = t.rng
+    t.raw('<rect width="200" height="200" fill="#77708a"/>')
+    noise = PNoise(rng, 7, 3)
+    # big irregular slabs, low relief (painted battle-map look)
+    _, cells = periodic_voronoi(6, rng, relax=0)
+    for c in cells:
+        pc = inset(c, 0.6, 1)
+        if pc.is_empty:
+            continue
+        pts = jitter_ring(ring(pc), rng, 7, 1.6)
+        base = shade("#837b93", 0.07 * noise(c.centroid.x, c.centroid.y) + rng.uniform(-0.04, 0.04))
+        t.poly(pts, smooth=False, fill=base, opacity=0.6)
+        t.poly(pts, smooth=False, fill="url(#csTL)")
+    # soft painterly washes (feathered): violet shadows and pale highlights crossing the slabs
+    t.rad([(0, "#3a3050", 0.55), (0.6, "#3a3050", 0.25), (1, "#3a3050", 0)], gid="csVio")
+    t.rad([(0, "#cac2d2", 0.45), (0.6, "#cac2d2", 0.18), (1, "#cac2d2", 0)], gid="csPale")
+    for _ in range(16):
+        x, y = rng.uniform(0, S), rng.uniform(0, S)
+        r = rng.uniform(26, 60)
+        t.ellipse(x, y, r, r * rng.uniform(0.5, 0.9), rng.uniform(0, 180), fill="url(#csVio)", opacity=round(rng.uniform(0.5, 0.9), 2))
+    for _ in range(12):
+        x, y = rng.uniform(0, S), rng.uniform(0, S)
+        r = rng.uniform(18, 40)
+        t.ellipse(x, y, r, r * rng.uniform(0.5, 0.9), rng.uniform(0, 180), fill="url(#csPale)", opacity=round(rng.uniform(0.5, 0.9), 2))
+    # cracks: slab joints drawn only in part (broken rock, not paving) + wandering fractures
+    for c in cells:
+        pts = jitter_ring(ring(c), rng, 5, 1.4)
+        n = len(pts)
+        i = 0
+        while i < n:
+            L = rng.randint(3, 9)
+            seg = [pts[(i + k) % n] for k in range(L + 1)]
+            if rng.random() < 0.75:
+                t.line([(x - 0.7, y - 0.7) for x, y in seg], smooth=False, stroke="#d0c8d8", stroke_width=0.5, opacity=0.3)
+                t.line(seg, smooth=False, stroke="#1e1824", stroke_width=rng.uniform(0.8, 1.3), opacity=0.85, stroke_linejoin="round",
+                       stroke_linecap="round")
+            i += L + rng.randint(0, 2)
+    for _ in range(16):
+        x, y = rng.uniform(0, S), rng.uniform(0, S)
+        w = random_walk((x, y), rng, rng.randint(4, 8), rng.uniform(4, 8), rng.uniform(0, 6.28), 0.55)
+        t.line(w, smooth=False, stroke="#241c2c", stroke_width=0.6, opacity=0.7, stroke_linecap="round")
+    # (glowing fissures are a separate decal, h-ember-fissures, so they don't repeat in a grid)
+    for _ in range(12):
+        pebble(t, rng.uniform(0, S), rng.uniform(0, S), rng.uniform(0.8, 2.0), rng.choice(["#6a6278", "#8a8296", "#4e465c"]))
+    grain(t, 240, ["#2e2638", "#b0a8bc", "#5e566c"], 0.25, 0.7, (0.25, 0.5))
+    return t
+
+
+# ---------------------------------------------------------------- Blood (for rivers painted with the brush / pools)
+def blood_water():
+    t = Tex(309)
+    rng = t.rng
+    t.raw('<rect width="200" height="200" fill="#6e0c10"/>')
+    # deep and thin areas
+    blotches(t, 34, ["#3a0508", "#4e080c"], 12, 30, (0.25, 0.45))
+    blotches(t, 26, ["#94161a", "#861317"], 10, 26, (0.2, 0.35))
+    # clotted craquelure: dark hairlines with a faint light lip
+    for _ in range(60):
+        x, y = rng.uniform(0, S), rng.uniform(0, S)
+        pts = random_walk((x, y), rng, rng.randint(4, 8), rng.uniform(4, 8), rng.uniform(0, 6.28), 0.7)
+        t.line([(px - 0.5, py - 0.5) for px, py in pts], smooth=False, stroke="#c8343a", stroke_width=0.5, opacity=0.3)
+        t.line(pts, smooth=False, stroke="#3a0508", stroke_width=0.8, opacity=0.85)
+        if rng.random() < 0.4:
+            a = rng.uniform(0, 6.28)
+            bx, by = pts[len(pts) // 2]
+            L = rng.uniform(3, 7)
+            t.line([(bx, by), (bx + math.cos(a) * L, by + math.sin(a) * L)], smooth=False, stroke="#3a0508", stroke_width=0.6, opacity=0.8)
+    # faint sheen
+    for _ in range(14):
+        x, y = rng.uniform(0, S), rng.uniform(0, S)
+        L = rng.uniform(10, 24)
+        t.line([(x, y), (x + L / 2, y - 2), (x + L, y)], stroke="#e07070", stroke_width=1.2, opacity=0.16, stroke_linecap="round")
+    # tiny bubbles
+    for _ in range(18):
+        x, y = rng.uniform(0, S), rng.uniform(0, S)
+        r = rng.uniform(0.6, 1.6)
+        t.circle(x, y, r, fill="none", stroke="#c84048", stroke_width=0.4, opacity=0.6)
+    return t
+
+
 HELL = {
     "h-scorched-earth": scorched_earth,
     "h-burned-ground": burned_ground,
@@ -346,4 +431,6 @@ HELL = {
     "h-brimstone": brimstone,
     "h-obsidian-tiles": obsidian_tiles,
     "h-iron-plates": iron_plates,
+    "h-cursed-stone": cursed_stone,
+    "h-blood-water": blood_water,
 }

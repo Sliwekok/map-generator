@@ -18,7 +18,7 @@ import importlib  # noqa: E402
 from reg import ASSETS  # noqa: E402
 
 # HELL_MODULES=furniture,terrain builds only some modules (handy while drawing; group.json is then partial)
-for _m in os.environ.get("HELL_MODULES", "structures,furniture,terrain").split(","):
+for _m in os.environ.get("HELL_MODULES", "structures,furniture,terrain,blood").split(","):
     importlib.import_module(_m.strip())
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
@@ -34,6 +34,8 @@ TEXTURES = {
     "h-brimstone": {"en": "Brimstone rock", "pl": "Skała siarkowa"},
     "h-obsidian-tiles": {"en": "Obsidian tiles", "pl": "Płyty z obsydianu"},
     "h-iron-plates": {"en": "Riveted iron floor", "pl": "Podłoga z nitowanej stali"},
+    "h-cursed-stone": {"en": "Cursed stone", "pl": "Przeklęty kamień"},
+    "h-blood-water": {"en": "Blood (river)", "pl": "Krew (rzeka)"},
 }
 
 only = sys.argv[1:]
