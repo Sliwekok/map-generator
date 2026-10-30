@@ -39,7 +39,7 @@ def main():
         d = os.path.join(OUT, a["category"])
         os.makedirs(d, exist_ok=True)
         p = os.path.join(d, a["id"] + ".svg")
-        with open(p, "w") as fh:
+        with open(p, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(svg)
         sizes.append((a["id"], len(svg)))
         m = {"name": a["name"]}
@@ -52,7 +52,7 @@ def main():
         if tint and "currentColor" in svg:
             pp = os.path.join(PREV, "tinted", a["id"] + ".svg")
             os.makedirs(os.path.dirname(pp), exist_ok=True)
-            with open(pp, "w") as fh:
+            with open(pp, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(svg.replace("currentColor", tint))
             rows.append((a, os.path.relpath(pp, PREV)))
         else:
@@ -64,7 +64,7 @@ def main():
         d = os.path.join(OUT, "patterns")
         os.makedirs(d, exist_ok=True)
         p = os.path.join(d, t["id"] + ".svg")
-        with open(p, "w") as fh:
+        with open(p, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(svg)
         sizes.append((t["id"], len(svg)))
         manifest_patterns[t["id"]] = {"name": t["name"]}
@@ -106,7 +106,7 @@ def main():
         lines.append(f'    "{k}": {J(v)}' + ("," if i < len(pitems) - 1 else ""))
     lines.append("  }")
     lines.append("}")
-    with open(os.path.join(OUT, "group.json"), "w") as fh:
+    with open(os.path.join(OUT, "group.json"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
 
     # contact sheet ------------------------------------------------------------------
@@ -132,7 +132,7 @@ def main():
             "linear-gradient(90deg,#0002 1px,transparent 1px);position:relative}"
             ".cell img{position:absolute;inset:0}figcaption{color:#fff;margin-top:4px}small{opacity:.7}</style>"
             + "".join(cards))
-    with open(os.path.join(PREV, "sheet.html"), "w") as fh:
+    with open(os.path.join(PREV, "sheet.html"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(html)
 
     print("preview:", os.path.join(PREV, "sheet.html"))
